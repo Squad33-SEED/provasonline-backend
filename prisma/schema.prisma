@@ -43,6 +43,24 @@ enum ResultadoAcesso {
   FALHA
 }
 
+enum TipoSimulado {
+  SIMULADO
+  PROVA
+  QUESTIONARIO
+}
+
+enum StatusSimulado {
+  RASCUNHO
+  PUBLICADO
+  ARQUIVADO
+}
+
+enum StatusAplicacao {
+  AGENDADA
+  EM_ANDAMENTO
+  ENCERRADA
+}
+
 model Usuario {
   id           String      @id @default(uuid()) @map("id_usuario")
   nome         String      @db.VarChar(200)
@@ -59,6 +77,7 @@ model Usuario {
   tokens                TokenAcesso[]
   notificacoesRecebidas Notificacao[]
   logsAcesso            LogAcesso[]
+  administracoesEscola  AdministradorEscola[]
 
   @@map("usuarios")
 }
@@ -85,20 +104,22 @@ model Aluno {
   criadoEm           DateTime @default(now()) @map("criado_em")
   atualizadoEm       DateTime @updatedAt @map("atualizado_em")
 
-  turmas TurmaAluno[]
+  turmas     TurmaAluno[]
+  resultados ResultadoAluno[]
 
   @@map("alunos")
 }
 
 model Professor {
-  id           String   @id @default(uuid()) @map("id_professor")
-  usuarioId    String   @unique @map("id_usuario")
-  usuario      Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  id            String   @id @default(uuid()) @map("id_professor")
+  usuarioId     String   @unique @map("id_usuario")
+  usuario       Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   especialidade String?
-  criadoEm    DateTime @default(now()) @map("criado_em")
+  criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
-  questoes Questao[]
+  questoes  Questao[]
+  simulados Simulado[]
 
   @@map("professores")
 }
@@ -176,6 +197,10 @@ model Questao {
   alternativas    Json
   respostaCorreta String               @map("resposta_correta") @db.Char(1)
   ativa           Boolean              @default(true)
+  criadoEm       DateTime             @default(now()) @map("criado_em")
+  atualizadoEm   DateTime             @updatedAt @map("atualizado_em")
+
+  simulados SimuladoQuestao[]
 
   @@map("questoes")
 }
@@ -189,7 +214,8 @@ model Escola {
   criadoEm    DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
-  turmas Turma[]
+  turmas          Turma[]
+  administradores AdministradorEscola[]
 
   @@map("escolas")
 }
@@ -201,7 +227,8 @@ model Turma {
   nome      String
   anoLetivo Int    @map("ano_letivo")
 
-  alunos TurmaAluno[]
+  alunos     TurmaAluno[]
+  aplicacoes Aplicacao[]
 
   @@map("turmas")
 }
@@ -216,6 +243,91 @@ model TurmaAluno {
 
   @@id([turmaId, alunoId])
   @@map("turmas_alunos")
+}
+
+model FaixaSerie {
+  id         String @id @default(uuid()) @map("id_faixa")
+  nome       String @db.VarChar(100)
+  quantidade Int?
+
+  simulados Simulado[]
+
+  @@map("faixa_series")
+}
+
+model Simulado {
+  id           String         @id @default(uuid()) @map("id_simulado")
+  professorId  String         @map("id_professor")
+  professor    Professor      @relation(fields: [professorId], references: [id])
+  faixaId      String?        @map("id_faixa")
+  faixa        FaixaSerie?    @relation(fields: [faixaId], references: [id])
+  titulo       String         @db.VarChar(200)
+  descricao    String?        @db.Text
+  tipo         TipoSimulado   @default(SIMULADO)
+  status       StatusSimulado @default(RASCUNHO)
+  tempoLimite  Int?           @map("tempo_limite")
+  criadoEm    DateTime       @default(now()) @map("criado_em")
+  atualizadoEm DateTime      @updatedAt @map("atualizado_em")
+
+  questoes   SimuladoQuestao[]
+  aplicacoes Aplicacao[]
+
+  @@map("simulados")
+}
+
+model SimuladoQuestao {
+  simuladoId String   @map("id_simulado")
+  simulado   Simulado @relation(fields: [simuladoId], references: [id], onDelete: Cascade)
+  questaoId  String   @map("id_questao")
+  questao    Questao  @relation(fields: [questaoId], references: [id])
+  ordem      Int
+
+  @@id([simuladoId, questaoId])
+  @@map("simulado_questoes")
+}
+
+model Aplicacao {
+  id          String          @id @default(uuid()) @map("id_aplicacao")
+  simuladoId  String          @map("id_simulado")
+  simulado    Simulado        @relation(fields: [simuladoId], references: [id])
+  turmaId     String          @map("id_turma")
+  turma       Turma           @relation(fields: [turmaId], references: [id])
+  dataInicio  DateTime        @map("data_inicio")
+  dataFim     DateTime        @map("data_fim")
+  status      StatusAplicacao @default(AGENDADA)
+  criadoEm   DateTime        @default(now()) @map("criado_em")
+
+  resultados ResultadoAluno[]
+
+  @@map("aplicacoes")
+}
+
+model ResultadoAluno {
+  id            String    @id @default(uuid()) @map("id_resultado")
+  aplicacaoId   String    @map("id_aplicacao")
+  aplicacao     Aplicacao @relation(fields: [aplicacaoId], references: [id])
+  alunoId       String    @map("id_aluno")
+  aluno         Aluno     @relation(fields: [alunoId], references: [id])
+  respostas     Json
+  pontuacao     Float?
+  iniciadoEm   DateTime? @map("iniciado_em")
+  finalizadoEm DateTime? @map("finalizado_em")
+
+  @@unique([aplicacaoId, alunoId])
+  @@map("resultados_alunos")
+}
+
+model AdministradorEscola {
+  id        String   @id @default(uuid()) @map("id_admin")
+  escolaId  String   @map("id_escola")
+  escola    Escola   @relation(fields: [escolaId], references: [id])
+  usuarioId String   @map("id_usuario")
+  usuario   Usuario  @relation(fields: [usuarioId], references: [id])
+  cargo     String?  @db.VarChar(100)
+  criadoEm DateTime @default(now()) @map("criado_em")
+
+  @@unique([escolaId, usuarioId])
+  @@map("administradores_escola")
 }
 
 model Notificacao {
