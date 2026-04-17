@@ -1,10 +1,10 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
-class Role(str, Enum):
+class TipoUsuario(str, Enum):
     ADMIN = "ADMIN"
     PROFESSOR = "PROFESSOR"
     ALUNO = "ALUNO"
@@ -13,14 +13,17 @@ class Role(str, Enum):
 class UsuarioCreate(BaseModel):
     nome: str
     email: EmailStr
+    cpf: str = Field(pattern=r"^\d{11}$")
     senha: str
-    role: Role = Role.ALUNO
+    tipo: TipoUsuario = TipoUsuario.ALUNO
 
 
 class UsuarioUpdate(BaseModel):
     nome: str | None = None
     email: EmailStr | None = None
-    role: Role | None = None
+    cpf: str | None = Field(default=None, pattern=r"^\d{11}$")
+    senha: str | None = None
+    tipo: TipoUsuario | None = None
     ativo: bool | None = None
 
 
@@ -28,7 +31,8 @@ class UsuarioResponse(BaseModel):
     id: str
     nome: str
     email: str
-    role: str
+    cpf: str
+    tipo: str
     ativo: bool
     criadoEm: datetime
     atualizadoEm: datetime
@@ -38,7 +42,7 @@ class UsuarioResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    cpf: str = Field(pattern=r"^\d{11}$")
     senha: str
 
 

@@ -10,15 +10,18 @@ router = APIRouter(prefix="/usuarios", tags=["Usuários"])
 
 @router.post("/", response_model=UsuarioResponse, status_code=201)
 async def criar_usuario(data: UsuarioCreate):
-    existing = await db.usuario.find_unique(where={"email": data.email})
-    if existing:
+    if await db.usuario.find_unique(where={"email": data.email}):
         raise HTTPException(status_code=400, detail="Email já cadastrado")
+
+    if await db.usuario.find_unique(where={"cpf": data.cpf}):
+        raise HTTPException(status_code=400, detail="CPF já cadastrado")
 
     return await db.usuario.create(data={
         "nome": data.nome,
         "email": data.email,
-        "senha": hash_password(data.senha),
-        "role": data.role.value,
+        "cpf": data.cpf,
+        "senhaHash": hash_password(data.senha),
+        "tipo": data.tipo.value,
     })
 
 
@@ -45,8 +48,12 @@ async def atualizar_usuario(id: str, data: UsuarioUpdate, _=Depends(get_current_
     if not update_data:
         return usuario
 
-    if "role" in update_data:
-        update_data["role"] = update_data["role"].value
+    if "tipo" in update_data:
+        tipo = update_data["tipo"]
+        update_data["tipo"] = tipo.value if hasattr(tipo, "value") else tipo
+
+    if "senha" in update_data:
+        update_data["senhaHash"] = hash_password(update_data.pop("senha"))
 
     return await db.usuario.update(where={"id": id}, data=update_data)
 
