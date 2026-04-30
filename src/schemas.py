@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class TipoUsuario(str, Enum):
@@ -12,7 +12,7 @@ class TipoUsuario(str, Enum):
 
 class UsuarioCreate(BaseModel):
     nome: str
-    email: EmailStr
+    email: EmailStr | None = None
     cpf: str = Field(pattern=r"^\d{11}$")
     senha: str
     tipo: TipoUsuario = TipoUsuario.ALUNO
@@ -30,10 +30,11 @@ class UsuarioUpdate(BaseModel):
 class UsuarioResponse(BaseModel):
     id: str
     nome: str
-    email: str
+    email: str | None = None
     cpf: str
     tipo: str
     ativo: bool
+    senhaProvisoria: bool
     criadoEm: datetime
     atualizadoEm: datetime
 
@@ -49,3 +50,23 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    requer_troca_senha: bool = False
+
+
+class TrocarSenhaRequest(BaseModel):
+    senha_atual: str = Field(min_length=1)
+    senha_nova: str = Field(min_length=8, max_length=128)
+
+    @field_validator("senha_nova")
+    @classmethod
+    def validar_senha_forte(cls, v: str) -> str:
+        if not any(c.isalpha() for c in v):
+            raise ValueError("A nova senha deve conter ao menos uma letra")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("A nova senha deve conter ao menos um número")
+        return v
+
+
+class TrocarSenhaResponse(BaseModel):
+    sucesso: bool = True
+    mensagem: str = "Senha alterada com sucesso"
