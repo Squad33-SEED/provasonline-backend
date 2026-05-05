@@ -1,13 +1,19 @@
 from datetime import date, datetime
 from enum import Enum
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
 class TipoUsuario(str, Enum):
     ADMIN = "ADMIN"
     PROFESSOR = "PROFESSOR"
     ALUNO = "ALUNO"
+
+
+class DificuldadeQuestao(str, Enum):
+    FACIL = "FACIL"
+    MEDIO = "MEDIO"
+    DIFICIL = "DIFICIL"
 
 
 class UsuarioCreate(BaseModel):
@@ -95,6 +101,15 @@ class ModalidadeResumo(BaseModel):
         from_attributes = True
 
 
+class ComponenteResumo(BaseModel):
+    id: str
+    nome: str
+    modalidade: ModalidadeResumo
+
+    class Config:
+        from_attributes = True
+
+
 class TurmaResponse(BaseModel):
     id: str
     nome: str
@@ -140,3 +155,54 @@ class AlunoListItem(BaseModel):
     necessidadeEspecial: bool
     turmaNome: str | None = None
     escolaNome: str | None = None
+
+
+class SimuladoCreate(BaseModel):
+    titulo: str = Field(min_length=3, max_length=200)
+    descricao: str | None = Field(default=None, max_length=2000)
+    componenteId: str = Field(min_length=1)
+    qtdFacil: int = Field(ge=0, le=100)
+    qtdMedio: int = Field(ge=0, le=100)
+    qtdDificil: int = Field(ge=0, le=100)
+    vagas: int = Field(ge=1, le=10000)
+    duracaoMinutos: int = Field(ge=15, le=240)
+    janelaInicio: datetime
+    janelaFim: datetime
+
+    @model_validator(mode="after")
+    def validar_regras_compostas(self):
+        if self.qtdFacil + self.qtdMedio + self.qtdDificil < 1:
+            raise ValueError("Total de questões deve ser pelo menos 1")
+
+        if self.janelaInicio >= self.janelaFim:
+            raise ValueError("Início da janela deve ser anterior ao fim")
+
+        agora = datetime.now(self.janelaInicio.tzinfo)
+        if self.janelaInicio <= agora:
+            raise ValueError("Início da janela deve estar no futuro")
+
+        return self
+
+
+class SimuladoResponse(BaseModel):
+    id: str
+    titulo: str
+    descricao: str | None
+    componente: ComponenteResumo
+    qtdFacil: int
+    qtdMedio: int
+    qtdDificil: int
+    totalQuestoes: int
+    vagas: int
+    duracaoMinutos: int
+    janelaInicio: datetime
+    janelaFim: datetime
+    status: str
+    criadoEm: datetime
+
+
+class DisponibilidadeQuestoes(BaseModel):
+    componenteId: str
+    facil: int
+    medio: int
+    dificil: int
