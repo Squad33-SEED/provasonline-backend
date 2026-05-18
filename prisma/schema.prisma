@@ -62,15 +62,16 @@ enum StatusAplicacao {
 }
 
 model Usuario {
-  id           String      @id @default(uuid()) @map("id_usuario")
-  nome         String      @db.VarChar(200)
-  email        String      @unique
-  cpf          String      @unique @db.Char(11)
-  senhaHash    String      @map("senha_hash")
-  tipo         TipoUsuario @default(ALUNO)
-  ativo        Boolean     @default(true)
-  criadoEm    DateTime    @default(now()) @map("criado_em")
-  atualizadoEm DateTime   @updatedAt @map("atualizado_em")
+  id              String      @id @default(uuid()) @map("id_usuario")
+  nome            String      @db.VarChar(200)
+  email           String?     @unique
+  cpf             String      @unique @db.Char(11)
+  senhaHash       String      @map("senha_hash")
+  senhaProvisoria Boolean     @default(true) @map("senha_provisoria")
+  tipo            TipoUsuario @default(ALUNO)
+  ativo           Boolean     @default(true)
+  criadoEm        DateTime    @default(now()) @map("criado_em")
+  atualizadoEm    DateTime    @updatedAt @map("atualizado_em")
 
   aluno                 Aluno?
   professor             Professor?
@@ -101,8 +102,8 @@ model Aluno {
   usuario             Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   necessidadeEspecial Boolean  @default(false) @map("necessidade_especial")
   dataNascimento      DateTime @map("data_nascimento") @db.Date
-  criadoEm           DateTime @default(now()) @map("criado_em")
-  atualizadoEm       DateTime @updatedAt @map("atualizado_em")
+  criadoEm            DateTime @default(now()) @map("criado_em")
+  atualizadoEm        DateTime @updatedAt @map("atualizado_em")
 
   turmas     TurmaAluno[]
   resultados ResultadoAluno[]
@@ -115,8 +116,8 @@ model Professor {
   usuarioId     String   @unique @map("id_usuario")
   usuario       Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   especialidade String?
-  criadoEm     DateTime @default(now()) @map("criado_em")
-  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+  criadoEm      DateTime @default(now()) @map("criado_em")
+  atualizadoEm  DateTime @updatedAt @map("atualizado_em")
 
   questoes  Questao[]
   simulados Simulado[]
@@ -129,7 +130,7 @@ model NivelEnsino {
   nome         String
   descricao    String?  @db.Text
   ativo        Boolean  @default(true)
-  criadoEm    DateTime @default(now()) @map("criado_em")
+  criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
   modalidades Modalidade[]
@@ -144,10 +145,11 @@ model Modalidade {
   nome         String      @db.VarChar(50)
   supletivo    Boolean     @default(false)
   ativo        Boolean     @default(true)
-  criadoEm    DateTime    @default(now()) @map("criado_em")
-  atualizadoEm DateTime   @updatedAt @map("atualizado_em")
+  criadoEm     DateTime    @default(now()) @map("criado_em")
+  atualizadoEm DateTime    @updatedAt @map("atualizado_em")
 
   componentes ComponenteCurricular[]
+  turmas      Turma[]
 
   @@map("modalidades")
 }
@@ -159,11 +161,12 @@ model ComponenteCurricular {
   nome         String     @db.VarChar(100)
   codigo       String     @db.VarChar(20)
   ativo        Boolean    @default(true)
-  criadoEm    DateTime   @default(now()) @map("criado_em")
-  atualizadoEm DateTime  @updatedAt @map("atualizado_em")
+  criadoEm     DateTime   @default(now()) @map("criado_em")
+  atualizadoEm DateTime   @updatedAt @map("atualizado_em")
 
-  assuntos Assunto[]
-  questoes Questao[]
+  assuntos  Assunto[]
+  questoes  Questao[]
+  simulados Simulado[]
 
   @@map("componentes_curriculares")
 }
@@ -174,8 +177,8 @@ model Assunto {
   componente   ComponenteCurricular @relation(fields: [componenteId], references: [id])
   nome         String
   ativo        Boolean              @default(true)
-  criadoEm    DateTime             @default(now()) @map("criado_em")
-  atualizadoEm DateTime            @updatedAt @map("atualizado_em")
+  criadoEm     DateTime             @default(now()) @map("criado_em")
+  atualizadoEm DateTime             @updatedAt @map("atualizado_em")
 
   questoes Questao[]
 
@@ -197,10 +200,10 @@ model Questao {
   alternativas    Json
   respostaCorreta String               @map("resposta_correta") @db.Char(1)
   ativa           Boolean              @default(true)
-  criadoEm       DateTime             @default(now()) @map("criado_em")
-  atualizadoEm   DateTime             @updatedAt @map("atualizado_em")
+  criadoEm        DateTime             @default(now()) @map("criado_em")
+  atualizadoEm    DateTime             @updatedAt @map("atualizado_em")
 
-  simulados SimuladoQuestao[]
+  tentativas TentativaQuestao[]
 
   @@map("questoes")
 }
@@ -211,7 +214,7 @@ model Escola {
   municipio    String
   inep         String   @unique @db.Char(8)
   ativo        Boolean  @default(true)
-  criadoEm    DateTime @default(now()) @map("criado_em")
+  criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
   turmas          Turma[]
@@ -221,15 +224,18 @@ model Escola {
 }
 
 model Turma {
-  id        String @id @default(uuid()) @map("id_turma")
-  escolaId  String @map("id_escola")
-  escola    Escola @relation(fields: [escolaId], references: [id])
-  nome      String
-  anoLetivo Int    @map("ano_letivo")
+  id           String     @id @default(uuid()) @map("id_turma")
+  escolaId     String     @map("id_escola")
+  escola       Escola     @relation(fields: [escolaId], references: [id])
+  modalidadeId String     @map("id_modalidade")
+  modalidade   Modalidade @relation(fields: [modalidadeId], references: [id])
+  nome         String
+  anoLetivo    Int        @map("ano_letivo")
 
   alunos     TurmaAluno[]
   aplicacoes Aplicacao[]
 
+  @@unique([escolaId, nome, anoLetivo])
   @@map("turmas")
 }
 
@@ -256,45 +262,41 @@ model FaixaSerie {
 }
 
 model Simulado {
-  id           String         @id @default(uuid()) @map("id_simulado")
-  professorId  String         @map("id_professor")
-  professor    Professor      @relation(fields: [professorId], references: [id])
-  faixaId      String?        @map("id_faixa")
-  faixa        FaixaSerie?    @relation(fields: [faixaId], references: [id])
-  titulo       String         @db.VarChar(200)
-  descricao    String?        @db.Text
-  tipo         TipoSimulado   @default(SIMULADO)
-  status       StatusSimulado @default(RASCUNHO)
-  tempoLimite  Int?           @map("tempo_limite")
-  criadoEm    DateTime       @default(now()) @map("criado_em")
-  atualizadoEm DateTime      @updatedAt @map("atualizado_em")
+  id              String               @id @default(uuid()) @map("id_simulado")
+  professorId     String               @map("id_professor")
+  professor       Professor            @relation(fields: [professorId], references: [id])
+  componenteId    String               @map("id_componente")
+  componente      ComponenteCurricular @relation(fields: [componenteId], references: [id])
+  faixaId         String?              @map("id_faixa")
+  faixa           FaixaSerie?          @relation(fields: [faixaId], references: [id])
+  titulo          String               @db.VarChar(200)
+  descricao       String?              @db.Text
+  tipo            TipoSimulado         @default(SIMULADO)
+  status          StatusSimulado       @default(RASCUNHO)
+  qtdFacil        Int                  @default(0) @map("qtd_facil")
+  qtdMedio        Int                  @default(0) @map("qtd_medio")
+  qtdDificil      Int                  @default(0) @map("qtd_dificil")
+  vagas           Int
+  duracaoMinutos  Int                  @map("duracao_minutos")
+  janelaInicio    DateTime             @map("janela_inicio")
+  janelaFim       DateTime             @map("janela_fim")
+  criadoEm        DateTime             @default(now()) @map("criado_em")
+  atualizadoEm    DateTime             @updatedAt @map("atualizado_em")
 
-  questoes   SimuladoQuestao[]
   aplicacoes Aplicacao[]
 
   @@map("simulados")
 }
 
-model SimuladoQuestao {
-  simuladoId String   @map("id_simulado")
-  simulado   Simulado @relation(fields: [simuladoId], references: [id], onDelete: Cascade)
-  questaoId  String   @map("id_questao")
-  questao    Questao  @relation(fields: [questaoId], references: [id])
-  ordem      Int
-
-  @@id([simuladoId, questaoId])
-  @@map("simulado_questoes")
-}
-
 model Aplicacao {
-  id          String          @id @default(uuid()) @map("id_aplicacao")
-  simuladoId  String          @map("id_simulado")
-  simulado    Simulado        @relation(fields: [simuladoId], references: [id])
-  turmaId     String          @map("id_turma")
-  turma       Turma           @relation(fields: [turmaId], references: [id])
-  dataInicio  DateTime        @map("data_inicio")
-  dataFim     DateTime        @map("data_fim")
-  status      StatusAplicacao @default(AGENDADA)
+  id         String          @id @default(uuid()) @map("id_aplicacao")
+  simuladoId String          @map("id_simulado")
+  simulado   Simulado        @relation(fields: [simuladoId], references: [id])
+  turmaId    String          @map("id_turma")
+  turma      Turma           @relation(fields: [turmaId], references: [id])
+  dataInicio DateTime        @map("data_inicio")
+  dataFim    DateTime        @map("data_fim")
+  status     StatusAplicacao @default(AGENDADA)
   criadoEm   DateTime        @default(now()) @map("criado_em")
 
   resultados ResultadoAluno[]
@@ -308,13 +310,27 @@ model ResultadoAluno {
   aplicacao     Aplicacao @relation(fields: [aplicacaoId], references: [id])
   alunoId       String    @map("id_aluno")
   aluno         Aluno     @relation(fields: [alunoId], references: [id])
-  respostas     Json
   pontuacao     Float?
-  iniciadoEm   DateTime? @map("iniciado_em")
-  finalizadoEm DateTime? @map("finalizado_em")
+  iniciadoEm    DateTime? @map("iniciado_em")
+  finalizadoEm  DateTime? @map("finalizado_em")
+
+  tentativasQuestoes TentativaQuestao[]
 
   @@unique([aplicacaoId, alunoId])
   @@map("resultados_alunos")
+}
+
+model TentativaQuestao {
+  resultadoId        String         @map("id_resultado")
+  resultado          ResultadoAluno @relation(fields: [resultadoId], references: [id], onDelete: Cascade)
+  questaoId          String         @map("id_questao")
+  questao            Questao        @relation(fields: [questaoId], references: [id])
+  ordem              Int
+  alternativaMarcada String?        @map("alternativa_marcada") @db.Char(1)
+  respondidoEm       DateTime?      @map("respondido_em")
+
+  @@id([resultadoId, questaoId])
+  @@map("tentativa_questoes")
 }
 
 model AdministradorEscola {
@@ -324,7 +340,7 @@ model AdministradorEscola {
   usuarioId String   @map("id_usuario")
   usuario   Usuario  @relation(fields: [usuarioId], references: [id])
   cargo     String?  @db.VarChar(100)
-  criadoEm DateTime @default(now()) @map("criado_em")
+  criadoEm  DateTime @default(now()) @map("criado_em")
 
   @@unique([escolaId, usuarioId])
   @@map("administradores_escola")
@@ -353,7 +369,7 @@ model LogAcesso {
   ipOrigem    String          @map("ip_origem") @db.VarChar(45)
   dispositivo String?         @db.Text
   resultado   ResultadoAcesso
-  criadoEm   DateTime        @default(now()) @map("criado_em")
+  criadoEm    DateTime        @default(now()) @map("criado_em")
 
   @@map("log_acesso")
 }

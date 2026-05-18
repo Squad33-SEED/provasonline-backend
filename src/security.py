@@ -1,4 +1,5 @@
 import hashlib
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from jose import jwt
@@ -34,8 +35,9 @@ def hash_token(token: str) -> str:
 
 
 def create_access_token(data: dict) -> tuple[str, datetime]:
+    import uuid
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {**data, "exp": expire}
+    payload = {**data, "exp": expire, "jti": str(uuid.uuid4())}
     token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return token, expire
 

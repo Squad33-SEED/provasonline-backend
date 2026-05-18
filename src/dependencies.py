@@ -35,3 +35,12 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="Usuário não encontrado ou inativo")
 
     return usuario
+
+
+async def require_admin(usuario=Depends(get_current_user)):
+    if usuario.tipo != "ADMIN":
+        raise HTTPException(
+            status_code=403,
+            detail="Acesso restrito a administradores",
+        )
+    return usuario
