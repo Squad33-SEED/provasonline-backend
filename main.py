@@ -14,6 +14,7 @@ from src.routers.catalogo import router as catalogo_router
 from src.routers.simulados import router as simulados_router
 from src.routers.turmas import router as turmas_router
 from src.routers.usuarios import router as usuarios_router
+from src.routers.aluno import router as aluno_router
 
 
 def rate_limit_exceeded_handler(request, exc: RateLimitExceeded):
@@ -36,7 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="Seed Backend — Residência de Software II",
-    version="1.4.0",
+    version="1.5.0",
     lifespan=lifespan,
 )
 
@@ -58,6 +59,7 @@ app.include_router(turmas_router)
 app.include_router(alunos_router)
 app.include_router(catalogo_router)
 app.include_router(simulados_router)
+app.include_router(aluno_router)
 
 
 @app.get("/", tags=["Health"])
