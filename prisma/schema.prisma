@@ -127,6 +127,7 @@ model Professor {
 
   questoes  Questao[]
   simulados Simulado[]
+  turmas ProfessorTurma[]
 
   @@map("professores")
 }
@@ -240,6 +241,7 @@ model Turma {
 
   alunos     TurmaAluno[]
   aplicacoes Aplicacao[]
+  professores ProfessorTurma[]
 
   @@unique([escolaId, nome, anoLetivo])
   @@map("turmas")
@@ -381,4 +383,14 @@ model LogAcesso {
   criadoEm    DateTime        @default(now()) @map("criado_em")
 
   @@map("log_acesso")
+}
+
+model ProfessorTurma {
+  professorId String    @map("id_professor")
+  professor   Professor @relation(fields: [professorId], references: [id], onDelete: Cascade)
+  turmaId     String    @map("id_turma")
+  turma       Turma     @relation(fields: [turmaId], references: [id], onDelete: Cascade)
+
+  @@id([professorId, turmaId])
+  @@map("professores_turmas")
 }

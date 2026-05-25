@@ -125,6 +125,12 @@ class TurmaResponse(BaseModel):
     totalAlunos: int = 0
 
 
+class TurmaResumoSimples(BaseModel):
+    id: str
+    nome: str
+    escolaNome: str
+
+
 class AlunoCreate(BaseModel):
     nome: str = Field(min_length=2, max_length=200)
     email: EmailStr | None = None
@@ -174,6 +180,7 @@ class SimuladoCreate(BaseModel):
     duracaoMinutos: int = Field(ge=15, le=240)
     janelaInicio: datetime
     janelaFim: datetime
+    turmaIds: list[str] = []
 
     @model_validator(mode="after")
     def validar_regras_compostas(self):
@@ -202,6 +209,7 @@ class SimuladoResponse(BaseModel):
     janelaFim: datetime
     status: str
     criadoEm: datetime
+    turmas: list[TurmaResumoSimples] = []
 
 
 class DisponibilidadeQuestoes(BaseModel):
@@ -271,3 +279,25 @@ class ResultadoResponse(BaseModel):
     finalizadoEm: datetime
     simulado: SimuladoResumoResultado
     gabarito: list[GabaritoItem]
+
+
+class ComponenteEtapaResumo(BaseModel):
+    id: str
+    nome: str
+    modalidade: str
+
+
+class EtapaDisponivelResponse(BaseModel):
+    id: str
+    titulo: str
+    descricao: str | None = None
+    componente: ComponenteEtapaResumo
+    duracaoMinutos: int
+    totalQuestoes: int
+    vagas: int | None = None
+    janelaInicio: datetime
+    janelaFim: datetime
+    ativa: bool
+    jaIniciada: bool
+    statusResultado: str | None = None
+    resultadoId: str | None = None

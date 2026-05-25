@@ -7,6 +7,7 @@ from src.dependencies import get_current_user
 from src.schemas import (
     AutoSaveRequest,
     AutoSaveResponse,
+    EtapaDisponivelResponse,
     GabaritoItem,
     IniciarProvaResponse,
     QuestaoParaAluno,
@@ -41,37 +42,66 @@ async def _buscar_aluno_do_usuario(usuario_id: str):
     return aluno
 
 
-@router.get("/etapas-disponiveis")
-async def etapas_disponiveis(_=Depends(get_current_user)):
+@router.get("/etapas-disponiveis", response_model=list[EtapaDisponivelResponse])
+async def etapas_disponiveis(usuario=Depends(get_current_user)):
+    _require_aluno(usuario)
+    aluno = await _buscar_aluno_do_usuario(usuario.id)
     agora = _agora()
+
+    turmas_aluno = await db.turmaaluno.find_many(
+        where={"alunoId": aluno.id, "saiuEm": None}
+    )
+    aluno_turma_ids = {ta.turmaId for ta in turmas_aluno}
 
     simulados = await db.simulado.find_many(
         where={
             "status": "PUBLICADO",
             "janelaFim": {"gte": agora},
         },
-        include={"componente": {"include": {"modalidade": True}}},
+        include={
+            "componente": {"include": {"modalidade": True}},
+            "aplicacoes": True,
+        },
         order={"janelaInicio": "asc"},
     )
 
+    simulados_visiveis = [
+        s for s in simulados
+        if not s.aplicacoes or any(a.turmaId in aluno_turma_ids for a in s.aplicacoes)
+    ]
+
+    resultado_map: dict = {}
+    if simulados_visiveis:
+        resultados = await db.resultadoaluno.find_many(
+            where={
+                "alunoId": aluno.id,
+                "simuladoId": {"in": [s.id for s in simulados_visiveis]},
+            }
+        )
+        for r in resultados:
+            resultado_map[r.simuladoId] = r
+
     return [
-        {
-            "id": s.id,
-            "titulo": s.titulo,
-            "descricao": s.descricao,
-            "componente": {
+        EtapaDisponivelResponse(
+            id=s.id,
+            titulo=s.titulo,
+            descricao=s.descricao,
+            componente={
                 "id": s.componente.id,
                 "nome": s.componente.nome,
                 "modalidade": s.componente.modalidade.nome,
             },
-            "duracaoMinutos": s.duracaoMinutos,
-            "totalQuestoes": s.qtdFacil + s.qtdMedio + s.qtdDificil,
-            "vagas": s.vagas,
-            "janelaInicio": s.janelaInicio,
-            "janelaFim": s.janelaFim,
-            "ativa": _aware(s.janelaInicio) <= agora <= _aware(s.janelaFim),
-        }
-        for s in simulados
+            duracaoMinutos=s.duracaoMinutos,
+            totalQuestoes=s.qtdFacil + s.qtdMedio + s.qtdDificil,
+            vagas=s.vagas,
+            janelaInicio=s.janelaInicio,
+            janelaFim=s.janelaFim,
+            ativa=_aware(s.janelaInicio) <= agora <= _aware(s.janelaFim),
+            jaIniciada=s.id in resultado_map,
+            statusResultado=resultado_map[s.id].statusResultado if s.id in resultado_map else None,
+            resultadoId=resultado_map[s.id].id if s.id in resultado_map else None,
+        )
+        for s in simulados_visiveis
     ]
 
 
@@ -101,10 +131,24 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
 
     if resultado_existente:
         if resultado_existente.statusResultado == "FINALIZADO":
-            raise HTTPException(status_code=409, detail="Você já realizou esta etapa")
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "mensagem": "Etapa já realizada",
+                    "resultadoId": resultado_existente.id,
+                    "statusResultado": "FINALIZADO",
+                },
+            )
 
         if resultado_existente.statusResultado == "EXPIRADO":
-            raise HTTPException(status_code=409, detail="Sua tentativa expirou")
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "mensagem": "Tentativa expirada",
+                    "resultadoId": resultado_existente.id,
+                    "statusResultado": "EXPIRADO",
+                },
+            )
 
         iniciado_em = _aware(resultado_existente.iniciadoEm)
         expira_em = iniciado_em + timedelta(minutes=simulado.duracaoMinutos)
@@ -114,7 +158,14 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
                 where={"id": resultado_existente.id},
                 data={"statusResultado": "EXPIRADO"},
             )
-            raise HTTPException(status_code=409, detail="Sua tentativa expirou")
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "mensagem": "Tentativa expirada",
+                    "resultadoId": resultado_existente.id,
+                    "statusResultado": "EXPIRADO",
+                },
+            )
 
         tentativas_ordenadas = sorted(resultado_existente.tentativasQuestoes, key=lambda tq: tq.ordem)
         questoes = [

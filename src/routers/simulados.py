@@ -8,6 +8,7 @@ from src.schemas import (
     ModalidadeResumo,
     SimuladoCreate,
     SimuladoResponse,
+    TurmaResumoSimples,
 )
 from src.services.sorteio_questoes import (
     contar_disponiveis,
@@ -16,12 +17,27 @@ from src.services.sorteio_questoes import (
 
 router = APIRouter(prefix="/simulados", tags=["Simulados"])
 
+_INCLUDE_COMPLETO = {
+    "componente": {"include": {"modalidade": True}},
+    "aplicacoes": {"include": {"turma": {"include": {"escola": True}}}},
+}
+
 
 def _serializar_simulado(simulado_obj) -> SimuladoResponse:
     componente = simulado_obj.componente
     modalidade = componente.modalidade
-
     total = simulado_obj.qtdFacil + simulado_obj.qtdMedio + simulado_obj.qtdDificil
+
+    turmas: list[TurmaResumoSimples] = []
+    if simulado_obj.aplicacoes:
+        turmas = [
+            TurmaResumoSimples(
+                id=a.turma.id,
+                nome=a.turma.nome,
+                escolaNome=a.turma.escola.nome,
+            )
+            for a in simulado_obj.aplicacoes
+        ]
 
     return SimuladoResponse(
         id=simulado_obj.id,
@@ -45,6 +61,7 @@ def _serializar_simulado(simulado_obj) -> SimuladoResponse:
         janelaFim=simulado_obj.janelaFim,
         status=simulado_obj.status,
         criadoEm=simulado_obj.criadoEm,
+        turmas=turmas,
     )
 
 
@@ -96,6 +113,16 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
             detail=" · ".join(faltas),
         )
 
+    turmas_validas: list[str] = []
+    for turma_id in data.turmaIds:
+        turma = await db.turma.find_unique(where={"id": turma_id})
+        if not turma:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Turma não encontrada: {turma_id}",
+            )
+        turmas_validas.append(turma_id)
+
     professor_demo = await db.professor.find_first()
     if not professor_demo:
         raise HTTPException(
@@ -118,19 +145,34 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
             "janelaFim": data.janelaFim,
             "status": "PUBLICADO",
         },
-        include={"componente": {"include": {"modalidade": True}}},
+        include=_INCLUDE_COMPLETO,
     )
 
-    return _serializar_simulado(novo)
+    for turma_id in turmas_validas:
+        await db.aplicacao.create(
+            data={
+                "simulado": {"connect": {"id": novo.id}},
+                "turma": {"connect": {"id": turma_id}},
+                "dataInicio": data.janelaInicio,
+                "dataFim": data.janelaFim,
+                "status": "AGENDADA",
+            }
+        )
+
+    simulado_completo = await db.simulado.find_unique(
+        where={"id": novo.id},
+        include=_INCLUDE_COMPLETO,
+    )
+
+    return _serializar_simulado(simulado_completo)
 
 
 @router.get("", response_model=list[SimuladoResponse])
 async def listar_simulados(_=Depends(get_current_user)):
     simulados = await db.simulado.find_many(
-        include={"componente": {"include": {"modalidade": True}}},
+        include=_INCLUDE_COMPLETO,
         order={"criadoEm": "desc"},
     )
-
     return [_serializar_simulado(s) for s in simulados]
 
 
@@ -138,9 +180,8 @@ async def listar_simulados(_=Depends(get_current_user)):
 async def buscar_simulado(simulado_id: str, _=Depends(get_current_user)):
     simulado = await db.simulado.find_unique(
         where={"id": simulado_id},
-        include={"componente": {"include": {"modalidade": True}}},
+        include=_INCLUDE_COMPLETO,
     )
     if not simulado:
         raise HTTPException(status_code=404, detail="Simulado não encontrado")
-
     return _serializar_simulado(simulado)
