@@ -16,6 +16,12 @@ class DificuldadeQuestao(str, Enum):
     DIFICIL = "DIFICIL"
 
 
+class StatusResultado(str, Enum):
+    EM_ANDAMENTO = "EM_ANDAMENTO"
+    FINALIZADO = "FINALIZADO"
+    EXPIRADO = "EXPIRADO"
+
+
 class UsuarioCreate(BaseModel):
     nome: str
     email: EmailStr | None = None
@@ -119,6 +125,12 @@ class TurmaResponse(BaseModel):
     totalAlunos: int = 0
 
 
+class TurmaResumoSimples(BaseModel):
+    id: str
+    nome: str
+    escolaNome: str
+
+
 class AlunoCreate(BaseModel):
     nome: str = Field(min_length=2, max_length=200)
     email: EmailStr | None = None
@@ -168,19 +180,17 @@ class SimuladoCreate(BaseModel):
     duracaoMinutos: int = Field(ge=15, le=240)
     janelaInicio: datetime
     janelaFim: datetime
+    turmaIds: list[str] = []
 
     @model_validator(mode="after")
     def validar_regras_compostas(self):
         if self.qtdFacil + self.qtdMedio + self.qtdDificil < 1:
             raise ValueError("Total de questões deve ser pelo menos 1")
-
         if self.janelaInicio >= self.janelaFim:
             raise ValueError("Início da janela deve ser anterior ao fim")
-
         agora = datetime.now(self.janelaInicio.tzinfo)
         if self.janelaInicio <= agora:
             raise ValueError("Início da janela deve estar no futuro")
-
         return self
 
 
@@ -199,6 +209,7 @@ class SimuladoResponse(BaseModel):
     janelaFim: datetime
     status: str
     criadoEm: datetime
+    turmas: list[TurmaResumoSimples] = []
 
 
 class DisponibilidadeQuestoes(BaseModel):
@@ -206,3 +217,104 @@ class DisponibilidadeQuestoes(BaseModel):
     facil: int
     medio: int
     dificil: int
+
+
+class AlternativaParaAluno(BaseModel):
+    letra: str
+    texto: str
+
+
+class QuestaoParaAluno(BaseModel):
+    ordem: int
+    questaoId: str
+    enunciado: str
+    alternativas: list[AlternativaParaAluno]
+    respostaSalva: str | None = None
+
+
+class IniciarProvaResponse(BaseModel):
+    resultadoId: str
+    iniciadoEm: datetime
+    expiraEm: datetime
+    duracaoMinutos: int
+    totalQuestoes: int
+    questoes: list[QuestaoParaAluno]
+
+
+class RespostaItem(BaseModel):
+    questaoId: str
+    resposta: str = Field(pattern=r"^[ABCDabcd]$")
+
+
+class AutoSaveRequest(BaseModel):
+    respostas: list[RespostaItem] = Field(min_length=1)
+
+
+class AutoSaveResponse(BaseModel):
+    salvo: bool
+    totalSalvas: int
+    salvoEm: datetime
+
+
+class SimuladoResumoResultado(BaseModel):
+    titulo: str
+    componente: str
+    duracaoMinutos: int
+
+
+class GabaritoItemDetalhado(BaseModel):
+    ordem: int
+    questaoId: str
+    enunciado: str
+    alternativaMarcada: str | None
+    alternativaCorreta: str
+    correta: bool
+
+
+class ResultadoResponse(BaseModel):
+    resultadoId: str
+    pontuacao: float
+    acertos: int
+    total: int
+    statusResultado: StatusResultado
+    finalizadoEm: datetime
+    simulado: SimuladoResumoResultado
+    gabaritoDisponivel: bool
+    gabaritoDisponivelEm: datetime
+    gabarito: list[GabaritoItemDetalhado] | None = None
+
+
+class HistoricoItem(BaseModel):
+    resultadoId: str
+    simuladoId: str
+    titulo: str
+    componente: str
+    pontuacao: float | None
+    acertos: int | None
+    total: int
+    statusResultado: StatusResultado
+    finalizadoEm: datetime | None
+    gabaritoDisponivel: bool
+    gabaritoDisponivelEm: datetime
+
+
+class ComponenteEtapaResumo(BaseModel):
+    id: str
+    nome: str
+    modalidade: str
+
+
+class EtapaDisponivelResponse(BaseModel):
+    id: str
+    titulo: str
+    descricao: str | None = None
+    componente: ComponenteEtapaResumo
+    duracaoMinutos: int
+    totalQuestoes: int
+    vagas: int | None = None
+    janelaInicio: datetime
+    janelaFim: datetime
+    ativa: bool
+    jaIniciada: bool
+    statusResultado: str | None = None
+    resultadoId: str | None = None

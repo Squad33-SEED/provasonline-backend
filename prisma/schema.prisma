@@ -61,6 +61,12 @@ enum StatusAplicacao {
   ENCERRADA
 }
 
+enum StatusResultado {
+  EM_ANDAMENTO
+  FINALIZADO
+  EXPIRADO
+}
+
 model Usuario {
   id              String      @id @default(uuid()) @map("id_usuario")
   nome            String      @db.VarChar(200)
@@ -121,6 +127,7 @@ model Professor {
 
   questoes  Questao[]
   simulados Simulado[]
+  turmas ProfessorTurma[]
 
   @@map("professores")
 }
@@ -234,6 +241,7 @@ model Turma {
 
   alunos     TurmaAluno[]
   aplicacoes Aplicacao[]
+  professores ProfessorTurma[]
 
   @@unique([escolaId, nome, anoLetivo])
   @@map("turmas")
@@ -262,28 +270,29 @@ model FaixaSerie {
 }
 
 model Simulado {
-  id              String               @id @default(uuid()) @map("id_simulado")
-  professorId     String               @map("id_professor")
-  professor       Professor            @relation(fields: [professorId], references: [id])
-  componenteId    String               @map("id_componente")
-  componente      ComponenteCurricular @relation(fields: [componenteId], references: [id])
-  faixaId         String?              @map("id_faixa")
-  faixa           FaixaSerie?          @relation(fields: [faixaId], references: [id])
-  titulo          String               @db.VarChar(200)
-  descricao       String?              @db.Text
-  tipo            TipoSimulado         @default(SIMULADO)
-  status          StatusSimulado       @default(RASCUNHO)
-  qtdFacil        Int                  @default(0) @map("qtd_facil")
-  qtdMedio        Int                  @default(0) @map("qtd_medio")
-  qtdDificil      Int                  @default(0) @map("qtd_dificil")
-  vagas           Int
-  duracaoMinutos  Int                  @map("duracao_minutos")
-  janelaInicio    DateTime             @map("janela_inicio")
-  janelaFim       DateTime             @map("janela_fim")
-  criadoEm        DateTime             @default(now()) @map("criado_em")
-  atualizadoEm    DateTime             @updatedAt @map("atualizado_em")
+  id             String               @id @default(uuid()) @map("id_simulado")
+  professorId    String               @map("id_professor")
+  professor      Professor            @relation(fields: [professorId], references: [id])
+  componenteId   String               @map("id_componente")
+  componente     ComponenteCurricular @relation(fields: [componenteId], references: [id])
+  faixaId        String?              @map("id_faixa")
+  faixa          FaixaSerie?          @relation(fields: [faixaId], references: [id])
+  titulo         String               @db.VarChar(200)
+  descricao      String?              @db.Text
+  tipo           TipoSimulado         @default(SIMULADO)
+  status         StatusSimulado       @default(RASCUNHO)
+  qtdFacil       Int                  @default(0) @map("qtd_facil")
+  qtdMedio       Int                  @default(0) @map("qtd_medio")
+  qtdDificil     Int                  @default(0) @map("qtd_dificil")
+  vagas          Int
+  duracaoMinutos Int                  @map("duracao_minutos")
+  janelaInicio   DateTime             @map("janela_inicio")
+  janelaFim      DateTime             @map("janela_fim")
+  criadoEm       DateTime             @default(now()) @map("criado_em")
+  atualizadoEm   DateTime             @updatedAt @map("atualizado_em")
 
   aplicacoes Aplicacao[]
+  resultados ResultadoAluno[]
 
   @@map("simulados")
 }
@@ -305,18 +314,20 @@ model Aplicacao {
 }
 
 model ResultadoAluno {
-  id            String    @id @default(uuid()) @map("id_resultado")
-  aplicacaoId   String    @map("id_aplicacao")
-  aplicacao     Aplicacao @relation(fields: [aplicacaoId], references: [id])
-  alunoId       String    @map("id_aluno")
-  aluno         Aluno     @relation(fields: [alunoId], references: [id])
-  pontuacao     Float?
-  iniciadoEm    DateTime? @map("iniciado_em")
-  finalizadoEm  DateTime? @map("finalizado_em")
+  id              String          @id @default(uuid()) @map("id_resultado")
+  simuladoId      String?         @map("id_simulado")
+  simulado        Simulado?       @relation(fields: [simuladoId], references: [id])
+  aplicacaoId     String?         @map("id_aplicacao")
+  aplicacao       Aplicacao?      @relation(fields: [aplicacaoId], references: [id])
+  alunoId         String          @map("id_aluno")
+  aluno           Aluno           @relation(fields: [alunoId], references: [id])
+  pontuacao       Float?
+  statusResultado StatusResultado @default(EM_ANDAMENTO) @map("status_resultado")
+  iniciadoEm      DateTime?       @map("iniciado_em")
+  finalizadoEm    DateTime?       @map("finalizado_em")
 
   tentativasQuestoes TentativaQuestao[]
 
-  @@unique([aplicacaoId, alunoId])
   @@map("resultados_alunos")
 }
 
@@ -372,4 +383,14 @@ model LogAcesso {
   criadoEm    DateTime        @default(now()) @map("criado_em")
 
   @@map("log_acesso")
+}
+
+model ProfessorTurma {
+  professorId String    @map("id_professor")
+  professor   Professor @relation(fields: [professorId], references: [id], onDelete: Cascade)
+  turmaId     String    @map("id_turma")
+  turma       Turma     @relation(fields: [turmaId], references: [id], onDelete: Cascade)
+
+  @@id([professorId, turmaId])
+  @@map("professores_turmas")
 }

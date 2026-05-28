@@ -1,29 +1,18 @@
 import asyncio
+import random
 
 from src.database import db
 
 
 async def contar_disponiveis(componente_id: str) -> dict[str, int]:
     facil_task = db.questao.count(
-        where={
-            "componenteId": componente_id,
-            "dificuldade": "FACIL",
-            "ativa": True,
-        }
+        where={"componenteId": componente_id, "dificuldade": "FACIL", "ativa": True}
     )
     medio_task = db.questao.count(
-        where={
-            "componenteId": componente_id,
-            "dificuldade": "MEDIO",
-            "ativa": True,
-        }
+        where={"componenteId": componente_id, "dificuldade": "MEDIO", "ativa": True}
     )
     dificil_task = db.questao.count(
-        where={
-            "componenteId": componente_id,
-            "dificuldade": "DIFICIL",
-            "ativa": True,
-        }
+        where={"componenteId": componente_id, "dificuldade": "DIFICIL", "ativa": True}
     )
 
     facil, medio, dificil = await asyncio.gather(facil_task, medio_task, dificil_task)
@@ -63,3 +52,47 @@ async def verificar_disponibilidade(
         )
 
     return (len(faltas) == 0, faltas)
+
+
+async def sortear_questoes_para_prova(
+    componente_id: str,
+    qtd_facil: int,
+    qtd_medio: int,
+    qtd_dificil: int,
+) -> list[dict]:
+    faceis, medias, dificeis = await asyncio.gather(
+        db.questao.find_many(
+            where={"componenteId": componente_id, "dificuldade": "FACIL", "ativa": True}
+        ),
+        db.questao.find_many(
+            where={"componenteId": componente_id, "dificuldade": "MEDIO", "ativa": True}
+        ),
+        db.questao.find_many(
+            where={"componenteId": componente_id, "dificuldade": "DIFICIL", "ativa": True}
+        ),
+    )
+
+    selecionadas = (
+        random.sample(faceis, qtd_facil)
+        + random.sample(medias, qtd_medio)
+        + random.sample(dificeis, qtd_dificil)
+    )
+
+    random.shuffle(selecionadas)
+
+    resultado = []
+    for ordem, questao in enumerate(selecionadas, start=1):
+        alternativas_raw = questao.alternativas
+        alternativas = (
+            [{"letra": a.get("letra", ""), "texto": a.get("texto", "")} for a in alternativas_raw]
+            if isinstance(alternativas_raw, list)
+            else []
+        )
+        resultado.append({
+            "ordem": ordem,
+            "questaoId": questao.id,
+            "enunciado": questao.enunciado,
+            "alternativas": alternativas,
+        })
+
+    return resultado

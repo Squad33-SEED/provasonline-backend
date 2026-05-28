@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="Seed Backend — Residência de Software II",
-    version="1.5.0",
+    version="1.6.0",
     lifespan=lifespan,
 )
 
@@ -64,4 +64,4 @@ app.include_router(aluno_router)
 
 @app.get("/", tags=["Health"])
 async def root() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "version": "1.6.0"}
