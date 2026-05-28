@@ -464,7 +464,7 @@ async def historico(usuario=Depends(get_current_user)):
         },
         include={
             "simulado": {"include": {"componente": True}},
-            "tentativasQuestoes": True,
+            "tentativasQuestoes": {"include": {"questao": True}},
         },
         order={"finalizadoEm": "desc"},
     )
@@ -473,11 +473,8 @@ async def historico(usuario=Depends(get_current_user)):
     historico_items: list[HistoricoItem] = []
 
     for r in resultados:
-        acertos = sum(
-            1 for tq in r.tentativasQuestoes
-            if tq.alternativaMarcada and tq.alternativaMarcada.upper() == tq.questao.respostaCorreta.upper()
-        ) if hasattr(r.tentativasQuestoes[0], "questao") and r.tentativasQuestoes else None
-
+        total = len(r.tentativasQuestoes)
+        acertos = _contar_acertos(r.tentativasQuestoes) if total > 0 else 0
         janela_fim = _aware(r.simulado.janelaFim)
 
         historico_items.append(HistoricoItem(

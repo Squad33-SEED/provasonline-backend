@@ -238,7 +238,7 @@ async def main() -> int:
 
         resultado = r.json()
 
-        print("\n→ check 11 — campos do resultado")
+        print("\n→ check 11 — campos do resultado pós-submissão")
         pontuacao = resultado.get("pontuacao", -1)
         await check(
             f"pontuação entre 0 e 10 (recebido: {pontuacao})",
@@ -248,11 +248,20 @@ async def main() -> int:
             "acertos + erros = total",
             resultado.get("acertos", -1) + (resultado.get("total", 0) - resultado.get("acertos", 0)) == resultado.get("total"),
         )
-        gabarito = resultado.get("gabarito", [])
         await check(
-            f"gabarito com {total_questoes_esperado} itens e campo 'correta'",
-            len(gabarito) == total_questoes_esperado and all("correta" in g for g in gabarito),
-            f"itens: {len(gabarito)}",
+            "gabaritoDisponivel=false antes da janelaFim",
+            resultado.get("gabaritoDisponivel") is False,
+            f"recebido: {resultado.get('gabaritoDisponivel')}",
+        )
+        await check(
+            "gabaritoDisponivelEm presente no response",
+            bool(resultado.get("gabaritoDisponivelEm")),
+            f"recebido: {resultado.get('gabaritoDisponivelEm')}",
+        )
+        await check(
+            "gabarito=null antes da janelaFim (anti-cola)",
+            resultado.get("gabarito") is None,
+            f"recebido: {type(resultado.get('gabarito')).__name__}",
         )
 
         print("\n→ check 12 — StatusResultado=FINALIZADO no banco")
@@ -271,13 +280,49 @@ async def main() -> int:
             f"status: {r.status_code}",
         )
 
-        print("\n→ check 14 — GET /resultado por ADMIN")
+        print("\n→ check 14 — GET /resultado por ADMIN (gabarito sempre disponível)")
         r = await client.get(f"/aluno/resultado/{resultado_id}", headers=h_admin)
         await check(
             "ADMIN lê resultado com simulado.titulo",
             r.status_code == 200 and bool(r.json().get("simulado", {}).get("titulo")),
             r.text[:150] if r.status_code != 200 else "",
         )
+        if r.status_code == 200:
+            resp_admin = r.json()
+            await check(
+                "ADMIN recebe gabaritoDisponivel=true",
+                resp_admin.get("gabaritoDisponivel") is True,
+                f"recebido: {resp_admin.get('gabaritoDisponivel')}",
+            )
+            gabarito_admin = resp_admin.get("gabarito") or []
+            await check(
+                f"ADMIN recebe gabarito com {total_questoes_esperado} itens detalhados",
+                len(gabarito_admin) == total_questoes_esperado
+                and all("enunciado" in g and "alternativaCorreta" in g for g in gabarito_admin),
+                f"itens: {len(gabarito_admin)}",
+            )
+
+        print("\n→ check 15 — GET /aluno/historico")
+        r = await client.get("/aluno/historico", headers=h_aluno)
+        await check(
+            "retorna 200 com lista de histórico",
+            r.status_code == 200 and isinstance(r.json(), list),
+            r.text[:150] if r.status_code != 200 else "",
+        )
+        if r.status_code == 200:
+            historico = r.json()
+            await check(
+                "histórico contém o resultado recém-finalizado",
+                any(h.get("resultadoId") == resultado_id for h in historico),
+                f"itens no histórico: {len(historico)}",
+            )
+            if historico:
+                item = next((h for h in historico if h.get("resultadoId") == resultado_id), historico[0])
+                await check(
+                    "histórico contém gabaritoDisponivelEm",
+                    bool(item.get("gabaritoDisponivelEm")),
+                    f"recebido: {item.get('gabaritoDisponivelEm')}",
+                )
 
     await cleanup(db, aluno.id)
     print("\n→ Artefatos de teste removidos")
