@@ -35,12 +35,14 @@ async def listar_modalidades(_=Depends(get_current_user)):
         for m in modalidades
     ]
 
-
-@router.get("/componentes", response_model=list[ComponenteResumo])
+@router.get("/componentes")
 async def listar_componentes(_=Depends(get_current_user)):
     componentes = await db.componentecurricular.find_many(
         where={"ativo": True},
-        include={"modalidade": {"include": {"nivel": True}}},
+        include={
+            "modalidade": {"include": {"nivel": True}},
+            "assuntos": True,
+        },
         order={"nome": "asc"},
     )
 
@@ -48,15 +50,21 @@ async def listar_componentes(_=Depends(get_current_user)):
     for c in componentes:
         modalidade = c.modalidade
         nome_modalidade = f"{modalidade.nivel.nome} — {modalidade.nome}"
-        resultado.append(
-            ComponenteResumo(
-                id=c.id,
-                nome=c.nome,
-                modalidade=ModalidadeResumo(
-                    id=modalidade.id,
-                    nome=nome_modalidade,
-                ),
-            )
-        )
+        resultado.append({
+            "id": c.id,
+            "nome": c.nome,
+            "modalidade": {
+                "id": modalidade.id,
+                "nome": nome_modalidade,
+            },
+            "assuntos": [{"id": a.id, "nome": a.nome} for a in (c.assuntos or [])],
+        })
 
     return resultado
+@router.get("/assuntos/{componente_id}")
+async def listar_assuntos(componente_id: str, _=Depends(get_current_user)):
+    assuntos = await db.assunto.find_many(
+        where={"componenteId": componente_id},
+        order={"nome": "asc"},
+    )
+    return [{"id": a.id, "nome": a.nome} for a in assuntos]
