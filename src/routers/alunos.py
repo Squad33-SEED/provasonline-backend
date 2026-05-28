@@ -1,6 +1,8 @@
 from datetime import date, datetime
+import csv
+import io
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from src.database import db
 from src.dependencies import get_current_user, require_admin
@@ -165,3 +167,138 @@ async def buscar_aluno(aluno_id: str, _=Depends(get_current_user)):
         turmaNome=turma_obj.nome if turma_obj else None,
         escolaNome=turma_obj.escola.nome if turma_obj else None,
     )
+
+
+@router.post("/importar")
+async def importar_alunos_csv(
+    arquivo: UploadFile = File(...),
+    _=Depends(require_admin),
+):
+    if not arquivo.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo não enviado",
+        )
+
+    if not arquivo.filename.lower().endswith(".csv"):
+        raise HTTPException(
+            status_code=400,
+            detail="Envie um arquivo .csv",
+        )
+
+    conteudo = await arquivo.read()
+
+    try:
+        texto = conteudo.decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo CSV inválido",
+        )
+
+    leitor = csv.DictReader(io.StringIO(texto))
+
+    alunos_importados = 0
+    alunos_ignorados = 0
+    erros = []
+
+    for numero_linha, linha in enumerate(leitor, start=2):
+        nome = linha.get("nome")
+        email = linha.get("email")
+        cpf = linha.get("cpf")
+        data_nascimento = linha.get("data_nascimento")
+        turma_id = linha.get("turma_id") or None
+
+        if not nome or not cpf or not data_nascimento:
+            alunos_ignorados += 1
+            erros.append(
+                f"Linha {numero_linha}: nome, CPF ou data de nascimento ausente"
+            )
+            continue
+
+        if not validar_cpf(cpf):
+            alunos_ignorados += 1
+            erros.append(
+                f"Linha {numero_linha}: CPF inválido ({cpf})"
+            )
+            continue
+
+        cpf_existente = await db.usuario.find_unique(
+            where={"cpf": cpf}
+        )
+
+        if cpf_existente:
+            alunos_ignorados += 1
+            erros.append(
+                f"Linha {numero_linha}: CPF já cadastrado ({cpf})"
+            )
+            continue
+
+        try:
+            data_nascimento_date = datetime.strptime(
+                data_nascimento,
+                "%Y-%m-%d",
+            ).date()
+        except ValueError:
+            alunos_ignorados += 1
+            erros.append(
+                f"Linha {numero_linha}: data inválida ({data_nascimento})"
+            )
+            continue
+
+        senha_provisoria = gerar_senha_provisoria(
+            data_nascimento_date
+        )
+
+        senha_hash = hash_password(senha_provisoria)
+
+        data_nascimento_dt = datetime.combine(
+            data_nascimento_date,
+            datetime.min.time(),
+        )
+
+        async with db.tx() as transaction:
+            novo_usuario = await transaction.usuario.create(
+                data={
+                    "nome": nome,
+                    "email": email,
+                    "cpf": cpf,
+                    "senhaHash": senha_hash,
+                    "senhaProvisoria": True,
+                    "tipo": "ALUNO",
+                    "ativo": True,
+                },
+            )
+
+            novo_aluno = await transaction.aluno.create(
+                data={
+                    "usuarioId": novo_usuario.id,
+                    "dataNascimento": data_nascimento_dt,
+                    "necessidadeEspecial": False,
+                },
+            )
+
+            if turma_id:
+                await transaction.turmaaluno.create(
+                    data={
+                        "turmaId": turma_id,
+                        "alunoId": novo_aluno.id,
+                        "entrouEm": datetime.combine(
+                            date.today(),
+                            datetime.min.time(),
+                        ),
+                    },
+                )
+
+        alunos_importados += 1
+
+    return {
+        "status": "sucesso",
+        "mensagem": (
+            f"{alunos_importados} aluno(s) importado(s). "
+            f"{alunos_ignorados} linha(s) ignorada(s)."
+        ),
+        "importados": alunos_importados,
+        "ignorados": alunos_ignorados,
+        "erros": erros,
+    }
