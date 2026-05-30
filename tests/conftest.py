@@ -55,17 +55,17 @@ async def _login(role: str) -> str:
         return resp.json()["access_token"]
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def token_admin(conexao_db):
     return await _login("ADMIN")
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def token_professor(conexao_db):
     return await _login("PROFESSOR")
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def token_aluno(conexao_db):
     return await _login("ALUNO")
 
