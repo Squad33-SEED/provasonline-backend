@@ -54,6 +54,33 @@ async def verificar_disponibilidade(
     return (len(faltas) == 0, faltas)
 
 
+def embaralhar_alternativas_questao(
+    alternativas: list[dict],
+    resposta_correta: str,
+) -> tuple[list[dict], str]:
+    letras = ["A", "B", "C", "D", "E"]
+    copia = [dict(a) for a in alternativas]
+    random.shuffle(copia)
+
+    resultado: list[dict] = []
+    nova_correta = resposta_correta
+
+    for i, alt in enumerate(copia):
+        nova_letra = letras[i]
+        letra_original = alt.get("letra", "")
+
+        resultado.append({
+            "letra": nova_letra,
+            "texto": alt.get("texto", ""),
+            "letraOriginal": letra_original,
+        })
+
+        if letra_original.upper() == resposta_correta.upper():
+            nova_correta = nova_letra
+
+    return resultado, nova_correta
+
+
 async def sortear_questoes_para_prova(
     componente_id: str,
     qtd_facil: int,

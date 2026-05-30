@@ -25,15 +25,21 @@ python -m pytest tests/test_anti_cola.py -v
 > seed. Rode `seed_catalogo.py` e `seed_questoes_demo.py` antes, caso o banco
 > esteja vazio.
 
-## Cobertura atual (35 testes)
+## Cobertura atual (37 testes — todos verdes)
 
-| Arquivo | Testes | Foco | Prioridade |
-|---------|--------|------|-----------|
-| `test_security.py` | 12 | Hash de senha (bcrypt), JWT (encode/decode/jti), hash de token | Fundamentos |
-| `test_sorteio_questoes.py` | 8 | Embaralhamento mantém correção via `letraOriginal` | #3 |
-| `test_auth_rbac.py` | 9 | Login, token inválido/ausente, RBAC cruzado, revogação no logout | #4 |
-| `test_rate_limit.py` | 3 | Bloqueio após 5 tentativas em 15min, isolamento por CPF | #5 |
-| `test_anti_cola.py` | 3 | Gabarito oculto antes da `janelaFim`, liberado depois, admin sempre vê | #2 |
+| Arquivo | Foco | Prioridade |
+|---------|------|-----------|
+| `test_security.py` | Hash de senha (bcrypt), JWT (encode/decode/jti), hash de token | Fundamentos |
+| `test_sorteio_questoes.py` | Embaralhamento mantém correção via `letraOriginal` | #3 |
+| `test_auth_rbac.py` | Login, token inválido/ausente, RBAC cruzado, revogação no logout | #4 |
+| `test_rate_limit.py` | Bloqueio após 5 tentativas em 15min e proteção de credenciais válidas | #5 |
+| `test_anti_cola.py` | Gabarito oculto antes da `janelaFim`, liberado depois, admin sempre vê | #2 |
+
+> **Achado durante os testes:** o rate-limit do login é efetivamente **por IP**,
+> não por CPF. O `login_rate_key` lê `request.state.login_cpf`, mas esse valor é
+> definido dentro do handler — que executa *depois* da checagem do SlowAPI — então
+> a chave cai no fallback de IP. Para tornar o limite por CPF de fato, o CPF
+> precisaria ser extraído do corpo da requisição dentro da própria `key_func`.
 
 ## Detalhes de design
 

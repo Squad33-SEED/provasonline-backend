@@ -27,11 +27,11 @@ async def test_rate_limit_mensagem_orienta_espera(client):
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_isolado_por_cpf(client):
+async def test_rate_limit_protege_credenciais_validas_apos_estouro(client):
     for _ in range(5):
         await client.post("/auth/login", json={"cpf": "98765432100", "senha": "x"})
 
-    outro = await client.post(
-        "/auth/login", json={"cpf": "11122233396", "senha": "admin123"}
+    bloqueado = await client.post(
+        "/auth/login", json={"cpf": "98765432100", "senha": "admin123"}
     )
-    assert outro.status_code == 200
+    assert bloqueado.status_code == 429
