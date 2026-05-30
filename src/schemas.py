@@ -327,3 +327,40 @@ class EtapaDisponivelResponse(BaseModel):
     jaIniciada: bool
     statusResultado: str | None = None
     resultadoId: str | None = None
+
+
+class ImportacaoLinha(BaseModel):
+    numero: int
+    nome: str | None = None
+    email: str | None = None
+    cpf: str | None = None
+    dataNascimento: str | None = None
+    turmaId: str | None = None
+
+
+class ImportacaoCreateResponse(BaseModel):
+    id: str
+    status: str
+    totalLinhas: int
+
+
+class ImportacaoStatusResponse(BaseModel):
+    id: str
+    arquivoNome: str
+    status: str
+    totalLinhas: int
+    processadas: int
+    importados: int
+    ignorados: int
+    erros: list[str]
+    concluida: bool
+
+
+class ProcessarLoteResponse(BaseModel):
+    id: str
+    status: str
+    processadas: int
+    totalLinhas: int
+    importados: int
+    ignorados: int
+    concluida: bool
