@@ -335,8 +335,20 @@ model ResultadoAluno {
   finalizadoEm    DateTime?       @map("finalizado_em")
 
   tentativasQuestoes TentativaQuestao[]
+  violacoes          ViolacaoProva[]
 
   @@map("resultados_alunos")
+}
+
+model ViolacaoProva {
+  id          String         @id @default(uuid()) @map("id_violacao")
+  resultadoId String         @map("id_resultado")
+  resultado   ResultadoAluno @relation(fields: [resultadoId], references: [id], onDelete: Cascade)
+  tipo        String
+  detalhe     String?
+  criadoEm    DateTime       @default(now()) @map("criado_em")
+
+  @@map("violacoes_prova")
 }
 
 model TentativaQuestao {
