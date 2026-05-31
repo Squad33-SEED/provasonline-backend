@@ -17,7 +17,18 @@ from src.schemas import (
     ResultadoResponse,
     SimuladoResumoResultado,
     StatusResultado,
+    ViolacaoRequest,
+    ViolacaoResponse,
 )
+
+ROTULOS_VIOLACAO = {
+    "saiu_tela_cheia": "saiu do modo tela cheia",
+    "trocou_aba": "trocou de aba ou janela",
+    "perdeu_foco": "saiu da janela da prova",
+    "copiar_colar": "tentou copiar ou colar conteúdo",
+    "menu_contexto": "abriu o menu de contexto (botão direito)",
+    "atalho_proibido": "usou um atalho de teclado bloqueado",
+}
 from src.services.sorteio_questoes import (
     embaralhar_alternativas_questao,
     sortear_questoes_para_prova,
@@ -129,6 +140,83 @@ async def _notificar_gabarito_disponivel(usuario_id: str, resultado_id: str, tit
                 "status": "PENDENTE",
             }
         )
+
+
+async def _notificar_violacao(
+    resultado_id: str,
+    simulado,
+    aluno_nome: str,
+    descricao: str,
+    total: int,
+) -> None:
+    destinatarios: set[str] = set()
+
+    if simulado and simulado.professor and simulado.professor.usuarioId:
+        destinatarios.add(simulado.professor.usuarioId)
+
+    admins = await db.usuario.find_many(where={"tipo": "ADMIN", "ativo": True})
+    for admin in admins:
+        destinatarios.add(admin.id)
+
+    titulo_simulado = simulado.titulo if simulado else "etapa"
+    mensagem = (
+        f"O aluno {aluno_nome} {descricao} durante a etapa '{titulo_simulado}'. "
+        f"Total de ocorrências: {total}."
+    )
+
+    for usuario_id in destinatarios:
+        await db.notificacao.create(
+            data={
+                "usuarioDest": {"connect": {"id": usuario_id}},
+                "tipo": "violacao_prova",
+                "titulo": "Possível tentativa de cola detectada",
+                "mensagem": mensagem,
+                "referenciaId": resultado_id,
+                "referenciaTipo": "resultado",
+                "status": "PENDENTE",
+            }
+        )
+
+
+@router.post("/violacao/{resultado_id}", response_model=ViolacaoResponse)
+async def registrar_violacao(
+    resultado_id: str,
+    data: ViolacaoRequest,
+    usuario=Depends(get_current_user),
+):
+    _require_aluno(usuario)
+    aluno = await _buscar_aluno_do_usuario(usuario.id)
+
+    resultado = await db.resultadoaluno.find_unique(
+        where={"id": resultado_id},
+        include={"simulado": {"include": {"professor": True}}},
+    )
+    if not resultado:
+        raise HTTPException(status_code=404, detail="Resultado não encontrado")
+    if resultado.alunoId != aluno.id:
+        raise HTTPException(status_code=403, detail="Acesso negado")
+
+    descricao = ROTULOS_VIOLACAO.get(data.tipo, "realizou uma ação suspeita")
+
+    await db.violacaoprova.create(
+        data={
+            "resultado": {"connect": {"id": resultado_id}},
+            "tipo": data.tipo,
+            "detalhe": data.detalhe or descricao,
+        }
+    )
+
+    total = await db.violacaoprova.count(where={"resultadoId": resultado_id})
+
+    await _notificar_violacao(
+        resultado_id=resultado_id,
+        simulado=resultado.simulado,
+        aluno_nome=usuario.nome,
+        descricao=descricao,
+        total=total,
+    )
+
+    return ViolacaoResponse(registrada=True, totalViolacoes=total)
 
 
 @router.get("/etapas-disponiveis", response_model=list[EtapaDisponivelResponse])

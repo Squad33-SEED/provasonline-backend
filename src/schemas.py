@@ -364,3 +364,20 @@ class ProcessarLoteResponse(BaseModel):
     importados: int
     ignorados: int
     concluida: bool
+
+
+class ViolacaoRequest(BaseModel):
+    tipo: str
+    detalhe: str | None = None
+
+
+class ViolacaoResponse(BaseModel):
+    registrada: bool
+    totalViolacoes: int
+
+
+class ViolacaoItem(BaseModel):
+    id: str
+    tipo: str
+    detalhe: str | None = None
+    criadoEm: datetime
