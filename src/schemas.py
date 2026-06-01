@@ -107,10 +107,19 @@ class ModalidadeResumo(BaseModel):
         from_attributes = True
 
 
+class AssuntoResumo(BaseModel):
+    id: str
+    nome: str
+
+    class Config:
+        from_attributes = True
+
+
 class ComponenteResumo(BaseModel):
     id: str
     nome: str
     modalidade: ModalidadeResumo
+    assuntos: list[AssuntoResumo] = []
 
     class Config:
         from_attributes = True
