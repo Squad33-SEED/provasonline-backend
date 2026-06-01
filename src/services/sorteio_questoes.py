@@ -120,6 +120,7 @@ async def sortear_questoes_para_prova(
             "questaoId": questao.id,
             "enunciado": questao.enunciado,
             "alternativas": alternativas,
+            "respostaCorreta": questao.respostaCorreta,
         })
 
     return resultado
