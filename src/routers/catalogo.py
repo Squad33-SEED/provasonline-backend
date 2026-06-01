@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from src.database import db
 from src.dependencies import get_current_user
 from src.schemas import (
+    AssuntoResumo,
     ComponenteResumo,
     EscolaResumo,
     ModalidadeResumo,
@@ -40,7 +41,10 @@ async def listar_modalidades(_=Depends(get_current_user)):
 async def listar_componentes(_=Depends(get_current_user)):
     componentes = await db.componentecurricular.find_many(
         where={"ativo": True},
-        include={"modalidade": {"include": {"nivel": True}}},
+        include={
+            "modalidade": {"include": {"nivel": True}},
+            "assuntos": {"where": {"ativo": True}},
+        },
         order={"nome": "asc"},
     )
 
@@ -48,6 +52,7 @@ async def listar_componentes(_=Depends(get_current_user)):
     for c in componentes:
         modalidade = c.modalidade
         nome_modalidade = f"{modalidade.nivel.nome} — {modalidade.nome}"
+        assuntos = sorted(c.assuntos or [], key=lambda a: a.nome)
         resultado.append(
             ComponenteResumo(
                 id=c.id,
@@ -56,7 +61,17 @@ async def listar_componentes(_=Depends(get_current_user)):
                     id=modalidade.id,
                     nome=nome_modalidade,
                 ),
+                assuntos=[AssuntoResumo(id=a.id, nome=a.nome) for a in assuntos],
             )
         )
 
     return resultado
+
+
+@router.get("/assuntos/{componente_id}", response_model=list[AssuntoResumo])
+async def listar_assuntos(componente_id: str, _=Depends(get_current_user)):
+    assuntos = await db.assunto.find_many(
+        where={"componenteId": componente_id, "ativo": True},
+        order={"nome": "asc"},
+    )
+    return [AssuntoResumo(id=a.id, nome=a.nome) for a in assuntos]
