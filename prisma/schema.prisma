@@ -43,6 +43,11 @@ enum ResultadoAcesso {
   FALHA
 }
 
+enum StatusSimuladoLivre {
+  EM_ANDAMENTO
+  FINALIZADO
+}
+
 enum TipoSimulado {
   SIMULADO
   PROVA
@@ -118,8 +123,9 @@ model Aluno {
   criadoEm            DateTime @default(now()) @map("criado_em")
   atualizadoEm        DateTime @updatedAt @map("atualizado_em")
 
-  turmas     TurmaAluno[]
-  resultados ResultadoAluno[]
+  turmas         TurmaAluno[]
+  resultados     ResultadoAluno[]
+  simuladosLivres SimuladoLivre[]
 
   @@map("alunos")
 }
@@ -217,7 +223,8 @@ model Questao {
   criadoEm        DateTime             @default(now()) @map("criado_em")
   atualizadoEm    DateTime             @updatedAt @map("atualizado_em")
 
-  tentativas TentativaQuestao[]
+  tentativas         TentativaQuestao[]
+  itensSimuladoLivre ItemSimuladoLivre[]
 
   @@map("questoes")
 }
@@ -430,4 +437,35 @@ model ImportacaoAlunos {
   atualizadoEm DateTime         @updatedAt @map("atualizado_em")
 
   @@map("importacoes_alunos")
+}
+
+model SimuladoLivre {
+  id             String              @id @default(uuid()) @map("id_simulado_livre")
+  alunoId        String              @map("id_aluno")
+  aluno          Aluno               @relation(fields: [alunoId], references: [id], onDelete: Cascade)
+  titulo         String              @db.VarChar(200)
+  componenteIds  Json                @map("componente_ids")
+  duracaoMinutos Int                 @map("duracao_minutos")
+  status         StatusSimuladoLivre @default(EM_ANDAMENTO)
+  pontuacao      Float?
+  iniciadoEm     DateTime            @default(now()) @map("iniciado_em")
+  finalizadoEm   DateTime?           @map("finalizado_em")
+  criadoEm       DateTime            @default(now()) @map("criado_em")
+
+  itens ItemSimuladoLivre[]
+
+  @@map("simulados_livres")
+}
+
+model ItemSimuladoLivre {
+  simuladoLivreId    String        @map("id_simulado_livre")
+  simuladoLivre      SimuladoLivre @relation(fields: [simuladoLivreId], references: [id], onDelete: Cascade)
+  questaoId          String        @map("id_questao")
+  questao            Questao       @relation(fields: [questaoId], references: [id])
+  ordem              Int
+  alternativaMarcada String?       @map("alternativa_marcada") @db.Char(1)
+  respondidoEm       DateTime?     @map("respondido_em")
+
+  @@id([simuladoLivreId, questaoId])
+  @@map("itens_simulado_livre")
 }

@@ -390,3 +390,91 @@ class ViolacaoItem(BaseModel):
     tipo: str
     detalhe: str | None = None
     criadoEm: datetime
+
+
+class SimuladoLivrePorSorteio(BaseModel):
+    componenteIds: list[str] = Field(min_length=1)
+    qtdFacil: int = Field(ge=0, le=100)
+    qtdMedio: int = Field(ge=0, le=100)
+    qtdDificil: int = Field(ge=0, le=100)
+    duracaoMinutos: int = Field(ge=5, le=240, default=45)
+
+    @model_validator(mode="after")
+    def validar_total(self):
+        if self.qtdFacil + self.qtdMedio + self.qtdDificil < 1:
+            raise ValueError("Selecione ao menos 1 questão")
+        return self
+
+
+class SimuladoLivrePorSelecao(BaseModel):
+    componenteIds: list[str] = Field(min_length=1)
+    questaoIds: list[str] = Field(min_length=1)
+    duracaoMinutos: int = Field(ge=5, le=240, default=45)
+
+
+class QuestaoSimuladoLivre(BaseModel):
+    ordem: int
+    questaoId: str
+    enunciado: str
+    assunto: str
+    dificuldade: str
+    alternativas: list[AlternativaParaAluno]
+    respostaSalva: str | None = None
+
+
+class SimuladoLivreResponse(BaseModel):
+    id: str
+    titulo: str
+    duracaoMinutos: int
+    totalQuestoes: int
+    status: str
+    questoes: list[QuestaoSimuladoLivre]
+
+
+class RespostaSimuladoLivreItem(BaseModel):
+    questaoId: str
+    resposta: str = Field(pattern=r"^[ABCDabcd]$")
+
+
+class SubmeterSimuladoLivreRequest(BaseModel):
+    respostas: list[RespostaSimuladoLivreItem] = []
+
+
+class GabaritoSimuladoLivreItem(BaseModel):
+    ordem: int
+    questaoId: str
+    enunciado: str
+    assunto: str
+    dificuldade: str
+    alternativaMarcada: str | None
+    alternativaCorreta: str
+    correta: bool
+
+
+class ResultadoSimuladoLivreResponse(BaseModel):
+    id: str
+    titulo: str
+    pontuacao: float
+    acertos: int
+    total: int
+    status: str
+    finalizadoEm: datetime | None
+    gabarito: list[GabaritoSimuladoLivreItem]
+
+
+class SimuladoLivreHistoricoItem(BaseModel):
+    id: str
+    titulo: str
+    totalQuestoes: int
+    pontuacao: float | None
+    status: str
+    criadoEm: datetime
+    finalizadoEm: datetime | None
+
+
+class QuestaoBanco(BaseModel):
+    id: str
+    enunciado: str
+    assunto: str
+    dificuldade: str
+    componenteId: str
