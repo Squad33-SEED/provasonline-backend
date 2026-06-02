@@ -44,3 +44,12 @@ async def require_admin(usuario=Depends(get_current_user)):
             detail="Acesso restrito a administradores",
         )
     return usuario
+
+
+async def require_professor(usuario=Depends(get_current_user)):
+    if usuario.tipo != "PROFESSOR":
+        raise HTTPException(
+            status_code=403,
+            detail="Acesso restrito a professores",
+        )
+    return usuario

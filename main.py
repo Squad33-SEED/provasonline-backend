@@ -17,6 +17,7 @@ from src.routers.turmas import router as turmas_router
 from src.routers.usuarios import router as usuarios_router
 from src.routers.aluno import router as aluno_router
 from src.routers.violacoes import router as violacoes_router
+from src.routers.professor import router as professor_router
 
 
 def rate_limit_exceeded_handler(request, exc: RateLimitExceeded):
@@ -64,6 +65,7 @@ app.include_router(simulados_router)
 app.include_router(simulado_livre_router)
 app.include_router(aluno_router)
 app.include_router(violacoes_router)
+app.include_router(professor_router)
 
 
 @app.get("/", tags=["Health"])

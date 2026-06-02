@@ -417,6 +417,34 @@ class ViolacaoPainelResponse(BaseModel):
     ocorrencias: list[ViolacaoPainelItem]
 
 
+class ProfessorTurmaItem(BaseModel):
+    id: str
+    nome: str
+    anoLetivo: int
+    escolaNome: str
+    modalidadeNome: str
+    totalAlunos: int
+
+
+class ProfessorQuestaoItem(BaseModel):
+    id: str
+    enunciado: str
+    componente: str
+    assunto: str
+    dificuldade: str
+    ativa: bool
+    totalAlternativas: int
+
+
+class ProfessorResultadoEtapa(BaseModel):
+    simuladoId: str
+    etapaTitulo: str
+    componente: str
+    finalizados: int
+    mediaNota: float | None
+    percentualAcerto: float | None
+
+
 class SimuladoLivrePorSorteio(BaseModel):
     componenteIds: list[str] = Field(min_length=1)
     qtdFacil: int = Field(ge=0, le=100)
