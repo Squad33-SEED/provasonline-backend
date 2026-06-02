@@ -8,6 +8,7 @@ from src.database import db
 from src.dependencies import get_current_user
 from src.schemas import (
     AlternativaParaAluno,
+    DisciplinaSimulado,
     GabaritoSimuladoLivreItem,
     QuestaoBanco,
     QuestaoSimuladoLivre,
@@ -102,6 +103,47 @@ def _montar_response(simulado, questoes_ordenadas) -> SimuladoLivreResponse:
     )
 
 
+@router.get("/disciplinas", response_model=list[DisciplinaSimulado])
+async def listar_disciplinas(usuario=Depends(get_current_user)):
+    _require_aluno(usuario)
+
+    componentes = await db.componentecurricular.find_many(where={"ativo": True})
+    questoes = await db.questao.find_many(where={"ativa": True})
+
+    por_componente: dict[str, dict[str, int]] = {}
+    for q in questoes:
+        c = por_componente.setdefault(q.componenteId, {"FACIL": 0, "MEDIO": 0, "DIFICIL": 0})
+        if q.dificuldade in c:
+            c[q.dificuldade] += 1
+
+    agregado: dict[str, dict] = {}
+    for comp in componentes:
+        dados = agregado.setdefault(
+            comp.nome,
+            {"componenteIds": [], "facil": 0, "medio": 0, "dificil": 0},
+        )
+        dados["componenteIds"].append(comp.id)
+        cont = por_componente.get(comp.id, {"FACIL": 0, "MEDIO": 0, "DIFICIL": 0})
+        dados["facil"] += cont["FACIL"]
+        dados["medio"] += cont["MEDIO"]
+        dados["dificil"] += cont["DIFICIL"]
+
+    disciplinas = [
+        DisciplinaSimulado(
+            nome=nome,
+            componenteIds=dados["componenteIds"],
+            totalQuestoes=dados["facil"] + dados["medio"] + dados["dificil"],
+            facil=dados["facil"],
+            medio=dados["medio"],
+            dificil=dados["dificil"],
+        )
+        for nome, dados in agregado.items()
+    ]
+    disciplinas = [d for d in disciplinas if d.totalQuestoes > 0]
+    disciplinas.sort(key=lambda d: d.nome)
+    return disciplinas
+
+
 @router.get("/banco", response_model=list[QuestaoBanco])
 async def listar_banco(
     usuario=Depends(get_current_user),
@@ -110,7 +152,8 @@ async def listar_banco(
     dificuldade: str | None = Query(default=None),
 ):
     _require_aluno(usuario)
-    where: dict = {"componenteId": componente_id, "ativa": True}
+    componente_ids = [c for c in componente_id.split(",") if c]
+    where: dict = {"componenteId": {"in": componente_ids}, "ativa": True}
     if assunto_id:
         where["assuntoId"] = assunto_id
     if dificuldade in ("FACIL", "MEDIO", "DIFICIL"):

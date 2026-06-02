@@ -478,3 +478,12 @@ class QuestaoBanco(BaseModel):
     assunto: str
     dificuldade: str
     componenteId: str
+
+
+class DisciplinaSimulado(BaseModel):
+    nome: str
+    componenteIds: list[str]
+    totalQuestoes: int
+    facil: int
+    medio: int
+    dificil: int

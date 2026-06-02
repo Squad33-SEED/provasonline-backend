@@ -20,6 +20,44 @@ async def _limpar(simulado_id):
 
 
 @pytest.mark.asyncio
+async def test_disciplinas_agrega_por_nome(client, token_aluno, auth):
+    resp = await client.get("/simulado-livre/disciplinas", headers=auth(token_aluno))
+    assert resp.status_code == 200
+    disciplinas = resp.json()
+    assert len(disciplinas) > 0
+
+    nomes = [d["nome"] for d in disciplinas]
+    assert len(nomes) == len(set(nomes)), "nomes de disciplina devem ser únicos (agregados)"
+
+    for d in disciplinas:
+        assert d["totalQuestoes"] > 0, "disciplinas sem questões não devem aparecer"
+        assert d["totalQuestoes"] == d["facil"] + d["medio"] + d["dificil"]
+        assert len(d["componenteIds"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_sortear_com_disciplina_agregada(client, token_aluno, auth):
+    disciplinas = (await client.get("/simulado-livre/disciplinas", headers=auth(token_aluno))).json()
+    alvo = max(disciplinas, key=lambda d: d["totalQuestoes"])
+
+    resp = await client.post(
+        "/simulado-livre/sortear",
+        json={
+            "componenteIds": alvo["componenteIds"],
+            "qtdFacil": 1,
+            "qtdMedio": 0,
+            "qtdDificil": 0,
+            "duracaoMinutos": 30,
+        },
+        headers=auth(token_aluno),
+    )
+    assert resp.status_code == 201
+    sid = resp.json()["id"]
+    assert resp.json()["totalQuestoes"] == 1
+    await _limpar(sid)
+
+
+@pytest.mark.asyncio
 async def test_sortear_cria_simulado(client, token_aluno, auth):
     cid = await _componente_com_questoes()
     resp = await client.post(
