@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from prisma import Json
 
 from src.database import db
 from src.dependencies import get_current_user, require_admin
@@ -192,17 +193,41 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
             detail="Componente curricular não encontrado ou inativo",
         )
 
-    disponivel, faltas = await verificar_disponibilidade(
-        data.componenteId,
-        data.qtdFacil,
-        data.qtdMedio,
-        data.qtdDificil,
-    )
-    if not disponivel:
-        raise HTTPException(
-            status_code=422,
-            detail=" · ".join(faltas),
+    qtd_facil = data.qtdFacil
+    qtd_medio = data.qtdMedio
+    qtd_dificil = data.qtdDificil
+    questoes_selecionadas = None
+
+    if data.questaoIds:
+        ids_unicos = list(dict.fromkeys(data.questaoIds))
+        questoes = await db.questao.find_many(
+            where={
+                "id": {"in": ids_unicos},
+                "componenteId": data.componenteId,
+                "ativa": True,
+            }
         )
+        if len(questoes) != len(ids_unicos):
+            raise HTTPException(
+                status_code=422,
+                detail="Há questões inválidas ou de outro componente na seleção",
+            )
+        qtd_facil = sum(1 for q in questoes if q.dificuldade == "FACIL")
+        qtd_medio = sum(1 for q in questoes if q.dificuldade == "MEDIO")
+        qtd_dificil = sum(1 for q in questoes if q.dificuldade == "DIFICIL")
+        questoes_selecionadas = Json([q.id for q in questoes])
+    else:
+        disponivel, faltas = await verificar_disponibilidade(
+            data.componenteId,
+            qtd_facil,
+            qtd_medio,
+            qtd_dificil,
+        )
+        if not disponivel:
+            raise HTTPException(
+                status_code=422,
+                detail=" · ".join(faltas),
+            )
 
     turmas_validas: list[str] = []
     for turma_id in data.turmaIds:
@@ -227,15 +252,20 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
             "descricao": data.descricao,
             "componente": {"connect": {"id": data.componenteId}},
             "professor": {"connect": {"id": professor_demo.id}},
-            "qtdFacil": data.qtdFacil,
-            "qtdMedio": data.qtdMedio,
-            "qtdDificil": data.qtdDificil,
+            "qtdFacil": qtd_facil,
+            "qtdMedio": qtd_medio,
+            "qtdDificil": qtd_dificil,
             "vagas": data.vagas,
             "duracaoMinutos": data.duracaoMinutos,
             "janelaInicio": data.janelaInicio,
             "janelaFim": data.janelaFim,
             "status": "PUBLICADO",
             "embaralharAlternativas": data.embaralharAlternativas,
+            **(
+                {"questoesSelecionadas": questoes_selecionadas}
+                if questoes_selecionadas is not None
+                else {}
+            ),
         },
         include=_INCLUDE_COMPLETO,
     )

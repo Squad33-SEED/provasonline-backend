@@ -31,6 +31,7 @@ ROTULOS_VIOLACAO = {
 }
 from src.services.sorteio_questoes import (
     embaralhar_alternativas_questao,
+    montar_questoes_selecionadas,
     sortear_questoes_para_prova,
 )
 
@@ -373,12 +374,16 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
             questoes=questoes,
         )
 
-    questoes_sorteadas = await sortear_questoes_para_prova(
-        componente_id=simulado.componenteId,
-        qtd_facil=simulado.qtdFacil,
-        qtd_medio=simulado.qtdMedio,
-        qtd_dificil=simulado.qtdDificil,
-    )
+    selecionadas = getattr(simulado, "questoesSelecionadas", None)
+    if isinstance(selecionadas, list) and selecionadas:
+        questoes_sorteadas = await montar_questoes_selecionadas(selecionadas)
+    else:
+        questoes_sorteadas = await sortear_questoes_para_prova(
+            componente_id=simulado.componenteId,
+            qtd_facil=simulado.qtdFacil,
+            qtd_medio=simulado.qtdMedio,
+            qtd_dificil=simulado.qtdDificil,
+        )
 
     iniciado_em = _agora()
     expira_em = iniciado_em + timedelta(minutes=simulado.duracaoMinutos)

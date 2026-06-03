@@ -81,6 +81,30 @@ def embaralhar_alternativas_questao(
     return resultado, nova_correta
 
 
+def _serializar_questao(questao, ordem: int) -> dict:
+    alternativas_raw = questao.alternativas
+    alternativas = (
+        [{"letra": a.get("letra", ""), "texto": a.get("texto", "")} for a in alternativas_raw]
+        if isinstance(alternativas_raw, list)
+        else []
+    )
+    return {
+        "ordem": ordem,
+        "questaoId": questao.id,
+        "enunciado": questao.enunciado,
+        "alternativas": alternativas,
+        "respostaCorreta": questao.respostaCorreta,
+    }
+
+
+async def montar_questoes_selecionadas(questao_ids: list[str]) -> list[dict]:
+    questoes = await db.questao.find_many(
+        where={"id": {"in": questao_ids}, "ativa": True}
+    )
+    random.shuffle(questoes)
+    return [_serializar_questao(q, ordem) for ordem, q in enumerate(questoes, start=1)]
+
+
 async def sortear_questoes_para_prova(
     componente_id: str,
     qtd_facil: int,

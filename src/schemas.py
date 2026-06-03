@@ -190,11 +190,13 @@ class SimuladoCreate(BaseModel):
     janelaInicio: datetime
     janelaFim: datetime
     turmaIds: list[str] = []
+    questaoIds: list[str] = []
     embaralharAlternativas: bool = False
 
     @model_validator(mode="after")
     def validar_regras_compostas(self):
-        if self.qtdFacil + self.qtdMedio + self.qtdDificil < 1:
+        modo_manual = len(self.questaoIds) > 0
+        if not modo_manual and self.qtdFacil + self.qtdMedio + self.qtdDificil < 1:
             raise ValueError("Total de questões deve ser pelo menos 1")
         if self.janelaInicio >= self.janelaFim:
             raise ValueError("Início da janela deve ser anterior ao fim")
