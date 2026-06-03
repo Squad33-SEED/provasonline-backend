@@ -10,6 +10,7 @@ from src.schemas import (
     DisponibilidadeQuestoes,
     GeracaoRapidaCreate,
     ModalidadeResumo,
+    QuestaoBanco,
     SimuladoCreate,
     SimuladoResponse,
     TurmaResumoSimples,
@@ -105,6 +106,37 @@ async def obter_disponibilidade(
         medio=contadores["medio"],
         dificil=contadores["dificil"],
     )
+
+
+@router.get("/banco", response_model=list[QuestaoBanco])
+async def listar_banco_questoes(
+    componenteId: str = Query(..., min_length=1),
+    assuntoId: str | None = Query(default=None),
+    dificuldade: str | None = Query(default=None),
+    _=Depends(require_admin),
+):
+    where: dict = {"componenteId": componenteId, "ativa": True}
+    if assuntoId:
+        where["assuntoId"] = assuntoId
+    if dificuldade in ("FACIL", "MEDIO", "DIFICIL"):
+        where["dificuldade"] = dificuldade
+
+    questoes = await db.questao.find_many(
+        where=where,
+        include={"assunto": True},
+        order={"criadoEm": "desc"},
+    )
+
+    return [
+        QuestaoBanco(
+            id=q.id,
+            enunciado=q.enunciado,
+            assunto=q.assunto.nome if q.assunto else "",
+            dificuldade=q.dificuldade,
+            componenteId=q.componenteId,
+        )
+        for q in questoes
+    ]
 
 
 @router.post("/gerar-rapido", response_model=SimuladoResponse, status_code=201)
