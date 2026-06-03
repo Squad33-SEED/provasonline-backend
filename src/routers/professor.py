@@ -6,7 +6,19 @@ from src.schemas import (
     ProfessorQuestaoItem,
     ProfessorResultadoEtapa,
     ProfessorTurmaItem,
+    ViolacaoEtapaResumo,
+    ViolacaoPainelItem,
+    ViolacaoPainelResponse,
 )
+
+_INCLUDE_VIOLACAO = {
+    "resultado": {
+        "include": {
+            "aluno": {"include": {"usuario": True}},
+            "simulado": {"include": {"componente": True}},
+        }
+    }
+}
 
 router = APIRouter(prefix="/professor", tags=["Professor"])
 
@@ -124,3 +136,79 @@ async def listar_resultados(usuario=Depends(require_professor)):
 
     resultado.sort(key=lambda e: e.finalizados, reverse=True)
     return resultado
+
+
+@router.get("/violacoes", response_model=ViolacaoPainelResponse)
+async def listar_violacoes(usuario=Depends(require_professor)):
+    professor = await _professor_do_usuario(usuario.id)
+
+    vinculos = await db.professorturma.find_many(
+        where={"professorId": professor.id}
+    )
+    turma_ids = [v.turmaId for v in vinculos]
+    vazio = ViolacaoPainelResponse(total=0, porEtapa=[], ocorrencias=[])
+    if not turma_ids:
+        return vazio
+
+    matriculas = await db.turmaaluno.find_many(
+        where={"turmaId": {"in": turma_ids}, "saiuEm": None}
+    )
+    aluno_ids = list({m.alunoId for m in matriculas})
+    if not aluno_ids:
+        return vazio
+
+    violacoes = await db.violacaoprova.find_many(
+        where={"resultado": {"is": {"alunoId": {"in": aluno_ids}}}},
+        include=_INCLUDE_VIOLACAO,
+        order={"criadoEm": "desc"},
+    )
+
+    ocorrencias: list[ViolacaoPainelItem] = []
+    resumo: dict = {}
+
+    for v in violacoes:
+        resultado = v.resultado
+        simulado = resultado.simulado if resultado else None
+        aluno = resultado.aluno if resultado else None
+        usuario_aluno = aluno.usuario if aluno else None
+
+        etapa_titulo = simulado.titulo if simulado else "—"
+        componente_nome = simulado.componente.nome if simulado and simulado.componente else "—"
+
+        ocorrencias.append(ViolacaoPainelItem(
+            id=v.id,
+            resultadoId=v.resultadoId,
+            tipo=v.tipo,
+            detalhe=v.detalhe,
+            criadoEm=v.criadoEm,
+            alunoNome=usuario_aluno.nome if usuario_aluno else "—",
+            alunoCpf=usuario_aluno.cpf if usuario_aluno else "—",
+            etapaTitulo=etapa_titulo,
+            componenteNome=componente_nome,
+        ))
+
+        if simulado:
+            entrada = resumo.setdefault(
+                simulado.id,
+                {"titulo": etapa_titulo, "total": 0, "alunos": set()},
+            )
+            entrada["total"] += 1
+            if aluno:
+                entrada["alunos"].add(aluno.id)
+
+    por_etapa = [
+        ViolacaoEtapaResumo(
+            simuladoId=sid,
+            etapaTitulo=dados["titulo"],
+            totalViolacoes=dados["total"],
+            alunosEnvolvidos=len(dados["alunos"]),
+        )
+        for sid, dados in resumo.items()
+    ]
+    por_etapa.sort(key=lambda e: e.totalViolacoes, reverse=True)
+
+    return ViolacaoPainelResponse(
+        total=len(ocorrencias),
+        porEtapa=por_etapa,
+        ocorrencias=ocorrencias,
+    )
