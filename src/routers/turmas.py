@@ -5,9 +5,20 @@ from src.dependencies import get_current_user, require_admin
 from src.schemas import (
     EscolaResumo,
     ModalidadeResumo,
+    ProfessorResumo,
+    ProfessorVinculoCreate,
     TurmaCreate,
     TurmaResponse,
 )
+
+
+def _professor_resumo(professor) -> "ProfessorResumo":
+    return ProfessorResumo(
+        id=professor.id,
+        nome=professor.usuario.nome if professor.usuario else "—",
+        cpf=professor.usuario.cpf if professor.usuario else "—",
+        especialidade=professor.especialidade,
+    )
 
 router = APIRouter(prefix="/turmas", tags=["Turmas"])
 
@@ -100,3 +111,82 @@ async def buscar_turma(turma_id: str, _=Depends(get_current_user)):
 
     total = await db.turmaaluno.count(where={"turmaId": turma.id, "saiuEm": None})
     return _serializar_turma(turma, total)
+
+
+@router.get("/{turma_id}/professores", response_model=list[ProfessorResumo])
+async def listar_professores_da_turma(turma_id: str, _=Depends(require_admin)):
+    turma = await db.turma.find_unique(where={"id": turma_id})
+    if not turma:
+        raise HTTPException(status_code=404, detail="Turma não encontrada")
+
+    vinculos = await db.professorturma.find_many(
+        where={"turmaId": turma_id},
+        include={"professor": {"include": {"usuario": True}}},
+    )
+
+    resumos = [_professor_resumo(v.professor) for v in vinculos if v.professor]
+    resumos.sort(key=lambda r: r.nome.lower())
+    return resumos
+
+
+@router.post("/{turma_id}/professores", response_model=ProfessorResumo, status_code=201)
+async def vincular_professor(
+    turma_id: str, data: ProfessorVinculoCreate, _=Depends(require_admin)
+):
+    turma = await db.turma.find_unique(where={"id": turma_id})
+    if not turma:
+        raise HTTPException(status_code=404, detail="Turma não encontrada")
+
+    professor = await db.professor.find_unique(
+        where={"id": data.professorId},
+        include={"usuario": True},
+    )
+    if not professor:
+        raise HTTPException(status_code=422, detail="Professor não encontrado")
+
+    existente = await db.professorturma.find_unique(
+        where={
+            "professorId_turmaId": {
+                "professorId": data.professorId,
+                "turmaId": turma_id,
+            }
+        }
+    )
+    if existente:
+        raise HTTPException(
+            status_code=409, detail="Professor já vinculado a esta turma"
+        )
+
+    await db.professorturma.create(
+        data={
+            "professor": {"connect": {"id": data.professorId}},
+            "turma": {"connect": {"id": turma_id}},
+        }
+    )
+
+    return _professor_resumo(professor)
+
+
+@router.delete("/{turma_id}/professores/{professor_id}", status_code=204)
+async def desvincular_professor(
+    turma_id: str, professor_id: str, _=Depends(require_admin)
+):
+    existente = await db.professorturma.find_unique(
+        where={
+            "professorId_turmaId": {
+                "professorId": professor_id,
+                "turmaId": turma_id,
+            }
+        }
+    )
+    if not existente:
+        raise HTTPException(status_code=404, detail="Vínculo não encontrado")
+
+    await db.professorturma.delete(
+        where={
+            "professorId_turmaId": {
+                "professorId": professor_id,
+                "turmaId": turma_id,
+            }
+        }
+    )

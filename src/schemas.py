@@ -445,6 +445,17 @@ class ProfessorResultadoEtapa(BaseModel):
     percentualAcerto: float | None
 
 
+class ProfessorResumo(BaseModel):
+    id: str
+    nome: str
+    cpf: str
+    especialidade: str | None = None
+
+
+class ProfessorVinculoCreate(BaseModel):
+    professorId: str = Field(min_length=1)
+
+
 class SimuladoLivrePorSorteio(BaseModel):
     componenteIds: list[str] = Field(min_length=1)
     qtdFacil: int = Field(ge=0, le=100)
