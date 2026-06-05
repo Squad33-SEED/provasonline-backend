@@ -12,6 +12,7 @@ from src.schemas import (
     GabaritoItemDetalhado,
     HistoricoItem,
     IniciarProvaResponse,
+    InscricaoResponse,
     QuestaoParaAluno,
     AlternativaParaAluno,
     ResultadoResponse,
@@ -259,6 +260,16 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
         for r in resultados:
             resultado_map[r.simuladoId] = r
 
+    inscricoes_set: set[str] = set()
+    if simulados_visiveis:
+        inscricoes = await db.inscricaoaluno.find_many(
+            where={
+                "alunoId": aluno.id,
+                "simuladoId": {"in": [s.id for s in simulados_visiveis]},
+            }
+        )
+        inscricoes_set = {i.simuladoId for i in inscricoes}
+
     return [
         EtapaDisponivelResponse(
             id=s.id,
@@ -276,11 +287,49 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
             janelaFim=s.janelaFim,
             ativa=_aware(s.janelaInicio) <= agora <= _aware(s.janelaFim),
             jaIniciada=s.id in resultado_map,
+            inscrito=s.id in inscricoes_set,
             statusResultado=resultado_map[s.id].statusResultado if s.id in resultado_map else None,
             resultadoId=resultado_map[s.id].id if s.id in resultado_map else None,
         )
         for s in simulados_visiveis
     ]
+
+
+@router.post("/inscrever/{simulado_id}", response_model=InscricaoResponse)
+async def inscrever_em_prova(simulado_id: str, usuario=Depends(get_current_user)):
+    _require_aluno(usuario)
+    aluno = await _buscar_aluno_do_usuario(usuario.id)
+
+    simulado = await db.simulado.find_unique(
+        where={"id": simulado_id},
+        include={"aplicacoes": True},
+    )
+    if not simulado or simulado.status != "PUBLICADO":
+        raise HTTPException(status_code=404, detail="Etapa não encontrada")
+
+    if _aware(simulado.janelaFim) < _agora():
+        raise HTTPException(status_code=422, detail="Etapa já encerrada")
+
+    turmas_aluno = await db.turmaaluno.find_many(
+        where={"alunoId": aluno.id, "saiuEm": None}
+    )
+    aluno_turma_ids = {ta.turmaId for ta in turmas_aluno}
+
+    if simulado.aplicacoes and not any(a.turmaId in aluno_turma_ids for a in simulado.aplicacoes):
+        raise HTTPException(status_code=403, detail="Etapa não disponível para sua turma")
+
+    existente = await db.inscricaoaluno.find_unique(
+        where={"simuladoId_alunoId": {"simuladoId": simulado_id, "alunoId": aluno.id}}
+    )
+    if not existente:
+        await db.inscricaoaluno.create(
+            data={
+                "simulado": {"connect": {"id": simulado_id}},
+                "aluno": {"connect": {"id": aluno.id}},
+            }
+        )
+
+    return InscricaoResponse(inscrito=True, simuladoId=simulado_id)
 
 
 @router.post("/iniciar-prova/{simulado_id}", response_model=IniciarProvaResponse, status_code=201)

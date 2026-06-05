@@ -336,8 +336,14 @@ class EtapaDisponivelResponse(BaseModel):
     janelaFim: datetime
     ativa: bool
     jaIniciada: bool
+    inscrito: bool = False
     statusResultado: str | None = None
     resultadoId: str | None = None
+
+
+class InscricaoResponse(BaseModel):
+    inscrito: bool = True
+    simuladoId: str
 
 
 class ImportacaoLinha(BaseModel):
