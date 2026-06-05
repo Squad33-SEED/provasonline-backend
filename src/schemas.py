@@ -441,6 +441,23 @@ class ProfessorQuestaoItem(BaseModel):
     assunto: str
     dificuldade: str
     ativa: bool
+
+
+class DashboardEmExecucaoItem(BaseModel):
+    id: str
+    titulo: str
+    componente: str
+    turmaEscola: str
+    janelaInicio: datetime
+    janelaFim: datetime
+    iniciados: int
+    finalizados: int
+
+
+class DashboardResponse(BaseModel):
+    etapasAtivas: int
+    etapasFinalizadas: int
+    emExecucao: list[DashboardEmExecucaoItem]
     totalAlternativas: int
 
 
