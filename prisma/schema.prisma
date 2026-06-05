@@ -123,9 +123,10 @@ model Aluno {
   criadoEm            DateTime @default(now()) @map("criado_em")
   atualizadoEm        DateTime @updatedAt @map("atualizado_em")
 
-  turmas         TurmaAluno[]
-  resultados     ResultadoAluno[]
+  turmas          TurmaAluno[]
+  resultados      ResultadoAluno[]
   simuladosLivres SimuladoLivre[]
+  inscricoes      InscricaoAluno[]
 
   @@map("alunos")
 }
@@ -309,6 +310,7 @@ model Simulado {
 
   aplicacoes Aplicacao[]
   resultados ResultadoAluno[]
+  inscricoes InscricaoAluno[]
 
   @@map("simulados")
 }
@@ -438,6 +440,17 @@ model ImportacaoAlunos {
   atualizadoEm DateTime         @updatedAt @map("atualizado_em")
 
   @@map("importacoes_alunos")
+}
+
+model InscricaoAluno {
+  simuladoId String   @map("id_simulado")
+  simulado   Simulado @relation(fields: [simuladoId], references: [id])
+  alunoId    String   @map("id_aluno")
+  aluno      Aluno    @relation(fields: [alunoId], references: [id])
+  inscritoEm DateTime @default(now()) @map("inscrito_em")
+
+  @@id([simuladoId, alunoId])
+  @@map("inscricoes_alunos")
 }
 
 model SimuladoLivre {
