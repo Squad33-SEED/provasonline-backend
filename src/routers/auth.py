@@ -93,7 +93,7 @@ async def login(request: Request, data: LoginRequest):
 
     return TokenResponse(
         access_token=token,
-        requer_troca_senha=usuario.senhaProvisoria,
+        requer_troca_senha=getattr(usuario, "senhaProvisoria", False),
     )
 
 

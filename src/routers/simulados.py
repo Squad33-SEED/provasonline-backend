@@ -13,11 +13,13 @@ from src.schemas import (
     QuestaoBanco,
     RelatorioEtapaResponse,
     RelatorioItemAluno,
+    DashboardEmExecucaoItem,
+    DashboardResponse,
     SimuladoCreate,
     SimuladoResponse,
     TurmaResumoSimples,
 )
-from src.routers.aluno import _contar_acertos
+from src.routers.aluno import _contar_acertos, _agora, _aware
 from src.services.sorteio_questoes import (
     contar_disponiveis,
     verificar_disponibilidade,
@@ -323,6 +325,85 @@ async def listar_simulados(_=Depends(get_current_user)):
     )
     return [_serializar_simulado(s) for s in simulados]
 
+
+
+
+def _turma_escola_dashboard(simulado_obj) -> str:
+    if not simulado_obj.aplicacoes:
+        return "Todas as turmas"
+
+    valores = []
+
+    for aplicacao in simulado_obj.aplicacoes:
+        turma = aplicacao.turma
+
+        if not turma:
+            continue
+
+        escola = turma.escola.nome if turma.escola else "Escola não informada"
+        valores.append(f"{turma.nome} - {escola}")
+
+    if not valores:
+        return "Todas as turmas"
+
+    return " / ".join(dict.fromkeys(valores))
+
+
+@router.get("/dashboard", response_model=DashboardResponse)
+async def dashboard_simulados(_=Depends(require_admin)):
+    agora = _agora()
+
+    simulados = await db.simulado.find_many(
+        include=_INCLUDE_COMPLETO,
+    )
+
+    etapas_ativas = []
+    etapas_finalizadas = 0
+
+    for simulado in simulados:
+        janela_inicio = _aware(simulado.janelaInicio)
+        janela_fim = _aware(simulado.janelaFim)
+
+        if simulado.status == "PUBLICADO" and janela_inicio <= agora <= janela_fim:
+            etapas_ativas.append(simulado)
+
+        if janela_fim < agora:
+            etapas_finalizadas += 1
+
+    em_execucao = []
+
+    for simulado in etapas_ativas:
+        iniciados = await db.resultadoaluno.count(
+            where={
+                "simuladoId": simulado.id,
+            }
+        )
+
+        finalizados = await db.resultadoaluno.count(
+            where={
+                "simuladoId": simulado.id,
+                "statusResultado": "FINALIZADO",
+            }
+        )
+
+        em_execucao.append(
+            DashboardEmExecucaoItem(
+                id=simulado.id,
+                titulo=simulado.titulo,
+                componente=simulado.componente.nome,
+                turmaEscola=_turma_escola_dashboard(simulado),
+                janelaInicio=simulado.janelaInicio,
+                janelaFim=simulado.janelaFim,
+                iniciados=iniciados,
+                finalizados=finalizados,
+            )
+        )
+
+    return DashboardResponse(
+        etapasAtivas=len(etapas_ativas),
+        etapasFinalizadas=etapas_finalizadas,
+        emExecucao=em_execucao,
+    )
 
 @router.get("/{simulado_id}", response_model=SimuladoResponse)
 async def buscar_simulado(simulado_id: str, _=Depends(get_current_user)):
