@@ -192,6 +192,9 @@ class SimuladoCreate(BaseModel):
     turmaIds: list[str] = []
     questaoIds: list[str] = []
     embaralharAlternativas: bool = False
+    geraCertificado: bool = False
+    nivelEnsinoId: str | None = None
+    notaMinimaCertificacao: float | None = None
 
     @model_validator(mode="after")
     def validar_regras_compostas(self):
@@ -203,6 +206,11 @@ class SimuladoCreate(BaseModel):
         agora = datetime.now(self.janelaInicio.tzinfo)
         if self.janelaInicio <= agora:
             raise ValueError("Início da janela deve estar no futuro")
+        if self.geraCertificado:
+            if not self.nivelEnsinoId:
+                raise ValueError("Etapa certificadora exige nivelEnsinoId")
+            if self.notaMinimaCertificacao is None:
+                self.notaMinimaCertificacao = 6.0
         return self
 
 
@@ -230,6 +238,9 @@ class SimuladoResponse(BaseModel):
     criadoEm: datetime
     turmas: list[TurmaResumoSimples] = []
     embaralharAlternativas: bool = False
+    geraCertificado: bool = False
+    nivelEnsinoId: str | None = None
+    notaMinimaCertificacao: float | None = None
 
 
 class DisponibilidadeQuestoes(BaseModel):
@@ -337,6 +348,7 @@ class EtapaDisponivelResponse(BaseModel):
     ativa: bool
     jaIniciada: bool
     inscrito: bool = False
+    geraCertificado: bool = False
     statusResultado: str | None = None
     resultadoId: str | None = None
 
@@ -676,3 +688,35 @@ class QuestaoListItem(BaseModel):
     ativa: bool
     totalAlternativas: int
     professorNome: str
+
+
+class NivelResumo(BaseModel):
+    id: str
+    nome: str
+    ordem: int
+
+
+class ComponenteAprovadoItem(BaseModel):
+    componente: str
+    nota: float
+
+
+class CertificadoItem(BaseModel):
+    id: str
+    tipo: str
+    nivel: str
+    anoReferencia: int
+    codigoVerificacao: str
+    emitidoEm: datetime
+    componentesAprovados: list[ComponenteAprovadoItem]
+
+
+class VerificacaoCertificado(BaseModel):
+    status: str
+    nome: str | None = None
+    nivel: str | None = None
+    tipo: str | None = None
+    anoReferencia: int | None = None
+    emitidoEm: datetime | None = None
+    cpf: str | None = None
+    componentesAprovados: list[ComponenteAprovadoItem] = []

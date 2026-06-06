@@ -7,9 +7,19 @@ from src.schemas import (
     ComponenteResumo,
     EscolaResumo,
     ModalidadeResumo,
+    NivelResumo,
 )
 
 router = APIRouter(prefix="/catalogo", tags=["Catálogo"])
+
+
+@router.get("/niveis", response_model=list[NivelResumo])
+async def listar_niveis(_=Depends(get_current_user)):
+    niveis = await db.nivelensino.find_many(
+        where={"ativo": True},
+        order=[{"ordem": "asc"}, {"nome": "asc"}],
+    )
+    return [NivelResumo(id=n.id, nome=n.nome, ordem=n.ordem) for n in niveis]
 
 
 @router.get("/escolas", response_model=list[EscolaResumo])

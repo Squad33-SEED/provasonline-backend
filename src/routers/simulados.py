@@ -74,6 +74,9 @@ def _serializar_simulado(simulado_obj) -> SimuladoResponse:
         criadoEm=simulado_obj.criadoEm,
         turmas=turmas,
         embaralharAlternativas=simulado_obj.embaralharAlternativas,
+        geraCertificado=simulado_obj.geraCertificado,
+        nivelEnsinoId=simulado_obj.nivelEnsinoId,
+        notaMinimaCertificacao=simulado_obj.notaMinimaCertificacao,
     )
 
 
@@ -231,6 +234,14 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
             detail="Componente curricular não encontrado ou inativo",
         )
 
+    if data.geraCertificado:
+        nivel = await db.nivelensino.find_unique(where={"id": data.nivelEnsinoId})
+        if not nivel:
+            raise HTTPException(
+                status_code=422,
+                detail="Nível de ensino não encontrado para etapa certificadora",
+            )
+
     qtd_facil = data.qtdFacil
     qtd_medio = data.qtdMedio
     qtd_dificil = data.qtdDificil
@@ -299,9 +310,16 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
             "janelaFim": data.janelaFim,
             "status": "PUBLICADO",
             "embaralharAlternativas": data.embaralharAlternativas,
+            "geraCertificado": data.geraCertificado,
+            "notaMinimaCertificacao": data.notaMinimaCertificacao,
             **(
                 {"questoesSelecionadas": questoes_selecionadas}
                 if questoes_selecionadas is not None
+                else {}
+            ),
+            **(
+                {"nivelEnsino": {"connect": {"id": data.nivelEnsinoId}}}
+                if data.geraCertificado
                 else {}
             ),
         },
