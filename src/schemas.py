@@ -604,3 +604,75 @@ class DashboardResponse(BaseModel):
     etapasFinalizadas: int
     emExecucao: list[DashboardEmExecucaoItem]
     desempenhoPorEscola: list[DesempenhoEscolaItem] = []
+
+
+class QuestaoAlternativaInput(BaseModel):
+    letra: str = Field(pattern=r"^[A-E]$")
+    texto: str = Field(min_length=1)
+
+
+class QuestaoAlternativa(BaseModel):
+    letra: str
+    texto: str
+
+
+class QuestaoCreate(BaseModel):
+    componenteId: str = Field(min_length=1)
+    assuntoId: str = Field(min_length=1)
+    tipo: str = "MULTIPLA_ESCOLHA"
+    dificuldade: DificuldadeQuestao
+    enunciado: str = Field(min_length=1)
+    alternativas: list[QuestaoAlternativaInput]
+    respostaCorreta: str = Field(pattern=r"^[A-E]$")
+    urlImagem: str | None = None
+
+    @field_validator("alternativas")
+    @classmethod
+    def validar_quantidade_alternativas(cls, v):
+        if len(v) < 2:
+            raise ValueError("Mínimo de 2 alternativas obrigatórias")
+        if len(v) > 5:
+            raise ValueError("Máximo de 5 alternativas permitidas")
+        letras = [a.letra for a in v]
+        if len(set(letras)) != len(letras):
+            raise ValueError("Letras das alternativas não podem repetir")
+        return v
+
+    @model_validator(mode="after")
+    def validar_resposta_correta(self):
+        letras = {a.letra for a in self.alternativas}
+        if self.respostaCorreta not in letras:
+            raise ValueError("Resposta correta deve ser uma das letras das alternativas")
+        return self
+
+
+class QuestaoUpdate(QuestaoCreate):
+    pass
+
+
+class QuestaoResponse(BaseModel):
+    id: str
+    enunciado: str
+    componenteId: str
+    componente: str
+    assuntoId: str
+    assunto: str
+    tipo: str
+    dificuldade: str
+    alternativas: list[QuestaoAlternativa]
+    respostaCorreta: str
+    urlImagem: str | None = None
+    ativa: bool
+    criadoEm: datetime
+
+
+class QuestaoListItem(BaseModel):
+    id: str
+    enunciado: str
+    componente: str
+    assunto: str
+    tipo: str
+    dificuldade: str
+    ativa: bool
+    totalAlternativas: int
+    professorNome: str
