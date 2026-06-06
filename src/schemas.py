@@ -443,24 +443,6 @@ class ProfessorQuestaoItem(BaseModel):
     ativa: bool
 
 
-class DashboardEmExecucaoItem(BaseModel):
-    id: str
-    titulo: str
-    componente: str
-    turmaEscola: str
-    janelaInicio: datetime
-    janelaFim: datetime
-    iniciados: int
-    finalizados: int
-
-
-class DashboardResponse(BaseModel):
-    etapasAtivas: int
-    etapasFinalizadas: int
-    emExecucao: list[DashboardEmExecucaoItem]
-    totalAlternativas: int
-
-
 class ProfessorResultadoEtapa(BaseModel):
     simuladoId: str
     etapaTitulo: str
@@ -611,7 +593,14 @@ class DashboardEmExecucaoItem(BaseModel):
     finalizados: int
 
 
+class DesempenhoEscolaItem(BaseModel):
+    escola: str
+    media: float
+    alunos: int
+
+
 class DashboardResponse(BaseModel):
     etapasAtivas: int
     etapasFinalizadas: int
     emExecucao: list[DashboardEmExecucaoItem]
+    desempenhoPorEscola: list[DesempenhoEscolaItem] = []

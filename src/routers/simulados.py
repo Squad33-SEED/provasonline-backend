@@ -15,6 +15,7 @@ from src.schemas import (
     RelatorioItemAluno,
     DashboardEmExecucaoItem,
     DashboardResponse,
+    DesempenhoEscolaItem,
     SimuladoCreate,
     SimuladoResponse,
     TurmaResumoSimples,
@@ -349,6 +350,55 @@ def _turma_escola_dashboard(simulado_obj) -> str:
     return " / ".join(dict.fromkeys(valores))
 
 
+async def _desempenho_por_escola() -> list[DesempenhoEscolaItem]:
+    resultados = await db.resultadoaluno.find_many(
+        where={"statusResultado": "FINALIZADO", "pontuacao": {"not": None}},
+        include={
+            "aluno": {
+                "include": {
+                    "turmas": {"include": {"turma": {"include": {"escola": True}}}}
+                }
+            }
+        },
+    )
+
+    agregado: dict[str, dict] = {}
+
+    for resultado in resultados:
+        aluno = resultado.aluno
+        if not aluno or not aluno.turmas:
+            continue
+
+        vinculo = next(
+            (t for t in aluno.turmas if t.saiuEm is None and t.turma and t.turma.escola),
+            None,
+        )
+        if not vinculo:
+            continue
+
+        escola = vinculo.turma.escola
+        dados = agregado.setdefault(
+            escola.id,
+            {"nome": escola.nome, "soma": 0.0, "qtd": 0, "alunos": set()},
+        )
+        dados["soma"] += resultado.pontuacao
+        dados["qtd"] += 1
+        dados["alunos"].add(aluno.id)
+
+    itens = [
+        DesempenhoEscolaItem(
+            escola=dados["nome"],
+            media=round(dados["soma"] / dados["qtd"], 1),
+            alunos=len(dados["alunos"]),
+        )
+        for dados in agregado.values()
+        if dados["qtd"] > 0
+    ]
+
+    itens.sort(key=lambda item: item.media, reverse=True)
+    return itens
+
+
 @router.get("/dashboard", response_model=DashboardResponse)
 async def dashboard_simulados(_=Depends(require_admin)):
     agora = _agora()
@@ -399,10 +449,13 @@ async def dashboard_simulados(_=Depends(require_admin)):
             )
         )
 
+    desempenho_por_escola = await _desempenho_por_escola()
+
     return DashboardResponse(
         etapasAtivas=len(etapas_ativas),
         etapasFinalizadas=etapas_finalizadas,
         emExecucao=em_execucao,
+        desempenhoPorEscola=desempenho_por_escola,
     )
 
 @router.get("/{simulado_id}", response_model=SimuladoResponse)
