@@ -7,10 +7,12 @@ from src.database import db
 from src.dependencies import get_current_user
 from src.services.certificacao import processar_certificacao
 from src.schemas import (
+    AproveitamentoNivel,
     AutoSaveRequest,
     AutoSaveResponse,
     CertificadoItem,
     ComponenteAprovadoItem,
+    ComponenteProgresso,
     EtapaDisponivelResponse,
     GabaritoItemDetalhado,
     HistoricoItem,
@@ -325,6 +327,53 @@ async def listar_certificados(usuario=Depends(get_current_user)):
         )
         for c in certificados
     ]
+
+
+@router.get("/aproveitamento", response_model=list[AproveitamentoNivel])
+async def listar_aproveitamento(usuario=Depends(get_current_user)):
+    _require_aluno(usuario)
+    aluno = await _buscar_aluno_do_usuario(usuario.id)
+    ano = _agora().year
+
+    niveis = await db.nivelensino.find_many(
+        where={"ativo": True, "componentesNivel": {"some": {}}},
+        include={"componentesNivel": {"include": {"componente": True}}},
+        order=[{"ordem": "asc"}, {"nome": "asc"}],
+    )
+
+    aprovacoes = await db.aproveitamentocandidato.find_many(
+        where={"alunoId": aluno.id, "anoReferencia": ano, "aprovado": True},
+    )
+    nota_por_chave = {(a.nivelId, a.componenteId): a.notaObtida for a in aprovacoes}
+
+    resultado = []
+    for nivel in niveis:
+        componentes = []
+        aprovados = 0
+        for nc in nivel.componentesNivel:
+            chave = (nivel.id, nc.componenteId)
+            ok = chave in nota_por_chave
+            if ok:
+                aprovados += 1
+            componentes.append(
+                ComponenteProgresso(
+                    componente=nc.componente.nome,
+                    aprovado=ok,
+                    nota=nota_por_chave.get(chave),
+                )
+            )
+        componentes.sort(key=lambda c: c.componente)
+        resultado.append(
+            AproveitamentoNivel(
+                nivel=nivel.nome,
+                anoReferencia=ano,
+                totalComponentes=len(componentes),
+                aprovados=aprovados,
+                componentes=componentes,
+            )
+        )
+
+    return resultado
 
 
 @router.post("/inscrever/{simulado_id}", response_model=InscricaoResponse)

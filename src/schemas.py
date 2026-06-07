@@ -720,3 +720,17 @@ class VerificacaoCertificado(BaseModel):
     emitidoEm: datetime | None = None
     cpf: str | None = None
     componentesAprovados: list[ComponenteAprovadoItem] = []
+
+
+class ComponenteProgresso(BaseModel):
+    componente: str
+    aprovado: bool
+    nota: float | None = None
+
+
+class AproveitamentoNivel(BaseModel):
+    nivel: str
+    anoReferencia: int
+    totalComponentes: int
+    aprovados: int
+    componentes: list[ComponenteProgresso]
