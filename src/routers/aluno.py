@@ -504,6 +504,28 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
             questoes=questoes,
         )
 
+    if simulado.geraCertificado and simulado.nivelEnsinoId:
+        ano = agora.year
+        inicio_ano = datetime(ano, 1, 1, tzinfo=timezone.utc)
+        fim_ano = datetime(ano + 1, 1, 1, tzinfo=timezone.utc)
+        tentativas_ano = await db.resultadoaluno.count(
+            where={
+                "alunoId": aluno.id,
+                "iniciadoEm": {"gte": inicio_ano, "lt": fim_ano},
+                "simulado": {
+                    "is": {
+                        "geraCertificado": True,
+                        "nivelEnsinoId": simulado.nivelEnsinoId,
+                    }
+                },
+            }
+        )
+        if tentativas_ano >= 3:
+            raise HTTPException(
+                status_code=403,
+                detail="Limite de 3 tentativas anuais para este nível foi atingido",
+            )
+
     selecionadas = getattr(simulado, "questoesSelecionadas", None)
     if isinstance(selecionadas, list) and selecionadas:
         questoes_sorteadas = await montar_questoes_selecionadas(selecionadas)

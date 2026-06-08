@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import csv
 import io
 
@@ -25,7 +25,7 @@ TAMANHO_LOTE = 50
 
 
 @router.post("", response_model=AlunoCreateResponse, status_code=201)
-async def criar_aluno(data: AlunoCreate, _=Depends(require_admin)):
+async def criar_aluno(data: AlunoCreate, admin=Depends(require_admin)):
     if not validar_cpf(data.cpf):
         raise HTTPException(status_code=422, detail="CPF inválido")
 
@@ -47,6 +47,13 @@ async def criar_aluno(data: AlunoCreate, _=Depends(require_admin)):
     senha_hash = hash_password(senha_provisoria)
     data_nascimento_dt = datetime.combine(data.dataNascimento, datetime.min.time())
 
+    prereq_extra = {}
+    if data.prereqValidado:
+        prereq_extra = {
+            "prereqValidadoPorId": admin.id,
+            "prereqValidadoEm": datetime.now(timezone.utc),
+        }
+
     async with db.tx() as transaction:
         novo_usuario = await transaction.usuario.create(
             data={
@@ -57,6 +64,10 @@ async def criar_aluno(data: AlunoCreate, _=Depends(require_admin)):
                 "senhaProvisoria": True,
                 "tipo": "ALUNO",
                 "ativo": True,
+                "tipoCandidato": data.tipoCandidato,
+                "prereqValidado": data.prereqValidado,
+                "prereqDocumento": data.prereqDocumento,
+                **prereq_extra,
             },
         )
 

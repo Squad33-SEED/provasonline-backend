@@ -147,12 +147,22 @@ class AlunoCreate(BaseModel):
     dataNascimento: date
     necessidadeEspecial: bool = False
     turmaId: str | None = None
+    tipoCandidato: str = "REGULAR"
+    prereqValidado: bool = False
+    prereqDocumento: str | None = None
 
     @field_validator("dataNascimento")
     @classmethod
     def validar_data_nao_futura(cls, v: date) -> date:
         if v > date.today():
             raise ValueError("Data de nascimento não pode estar no futuro")
+        return v
+
+    @field_validator("tipoCandidato")
+    @classmethod
+    def validar_tipo_candidato(cls, v: str) -> str:
+        if v not in ("REGULAR", "EXTERNO"):
+            raise ValueError("tipoCandidato deve ser REGULAR ou EXTERNO")
         return v
 
 
