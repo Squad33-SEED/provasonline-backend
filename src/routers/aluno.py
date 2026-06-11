@@ -791,3 +791,37 @@ async def historico(usuario=Depends(get_current_user)):
         ))
 
     return historico_items
+
+@router.get("/prova-em-andamento")
+async def prova_em_andamento(usuario=Depends(get_current_user)):
+    _require_aluno(usuario)
+    aluno = await _buscar_aluno_do_usuario(usuario.id)
+
+    resultado = await db.resultadoaluno.find_first(
+        where={
+            "alunoId": aluno.id,
+            "statusResultado": "EM_ANDAMENTO",
+        },
+        include={"simulado": True},
+    )
+
+    if not resultado or not resultado.simulado:
+        return {"emAndamento": False}
+
+    agora = _agora()
+    iniciado_em = _aware(resultado.iniciadoEm)
+    expira_em = iniciado_em + timedelta(minutes=resultado.simulado.duracaoMinutos)
+
+    if agora > expira_em:
+        await db.resultadoaluno.update(
+            where={"id": resultado.id},
+            data={"statusResultado": "EXPIRADO"},
+        )
+        return {"emAndamento": False}
+
+    return {
+        "emAndamento": True,
+        "simuladoId": resultado.simuladoId,
+        "resultadoId": resultado.id,
+        "expiraEm": expira_em.isoformat(),
+    }

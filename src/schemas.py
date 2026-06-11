@@ -744,3 +744,9 @@ class AproveitamentoNivel(BaseModel):
     totalComponentes: int
     aprovados: int
     componentes: list[ComponenteProgresso]
+    
+class ProvaEmAndamentoResponse(BaseModel):
+    emAndamento: bool
+    simuladoId: str | None = None
+    resultadoId: str | None = None
+    expiraEm: str | None = None
