@@ -266,6 +266,7 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
             resultado_map[r.simuladoId] = r
 
     inscricoes_set: set[str] = set()
+    inscritos_por_simulado: dict[str, int] = {}
     if simulados_visiveis:
         inscricoes = await db.inscricaoaluno.find_many(
             where={
@@ -274,6 +275,15 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
             }
         )
         inscricoes_set = {i.simuladoId for i in inscricoes}
+
+        contagens = await db.inscricaoaluno.group_by(
+            by=["simuladoId"],
+            where={"simuladoId": {"in": [s.id for s in simulados_visiveis]}},
+            count=True,
+        )
+        inscritos_por_simulado = {
+            c["simuladoId"]: c["_count"]["_all"] for c in contagens
+        }
 
     return [
         EtapaDisponivelResponse(
@@ -288,6 +298,8 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
             duracaoMinutos=s.duracaoMinutos,
             totalQuestoes=s.qtdFacil + s.qtdMedio + s.qtdDificil,
             vagas=s.vagas,
+            vagasTotais=s.vagas,
+            vagasDisponiveis=max(s.vagas - inscritos_por_simulado.get(s.id, 0), 0),
             janelaInicio=s.janelaInicio,
             janelaFim=s.janelaFim,
             ativa=_aware(s.janelaInicio) <= agora <= _aware(s.janelaFim),
@@ -403,6 +415,15 @@ async def inscrever_em_prova(simulado_id: str, usuario=Depends(get_current_user)
         where={"simuladoId_alunoId": {"simuladoId": simulado_id, "alunoId": aluno.id}}
     )
     if not existente:
+        total_inscritos = await db.inscricaoaluno.count(
+            where={"simuladoId": simulado_id}
+        )
+        if total_inscritos >= simulado.vagas:
+            raise HTTPException(
+                status_code=422,
+                detail="Não há mais vagas disponíveis para esta prova",
+            )
+
         await db.inscricaoaluno.create(
             data={
                 "simulado": {"connect": {"id": simulado_id}},

@@ -353,6 +353,8 @@ class EtapaDisponivelResponse(BaseModel):
     duracaoMinutos: int
     totalQuestoes: int
     vagas: int | None = None
+    vagasTotais: int = 0
+    vagasDisponiveis: int = 0
     janelaInicio: datetime
     janelaFim: datetime
     ativa: bool
