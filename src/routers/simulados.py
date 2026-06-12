@@ -318,7 +318,6 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
             "titulo": data.titulo,
             "descricao": data.descricao,
             "componente": {"connect": {"id": componente_principal_id}},
-            "componenteIds": Json(componente_ids),
             "professor": {"connect": {"id": professor_demo.id}},
             "qtdFacil": qtd_facil,
             "qtdMedio": qtd_medio,
