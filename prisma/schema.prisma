@@ -204,6 +204,7 @@ model ComponenteCurricular {
   nome         String     @db.VarChar(100)
   codigo       String     @db.VarChar(20)
   ativo        Boolean    @default(true)
+  questionsSubjectSlug String? @map("questions_subject_slug")
   criadoEm     DateTime   @default(now()) @map("criado_em")
   atualizadoEm DateTime   @updatedAt @map("atualizado_em")
 
@@ -248,7 +249,6 @@ model Questao {
   criadoEm        DateTime             @default(now()) @map("criado_em")
   atualizadoEm    DateTime             @updatedAt @map("atualizado_em")
 
-  tentativas         TentativaQuestao[]
   itensSimuladoLivre ItemSimuladoLivre[]
 
   @@map("questoes")
@@ -394,7 +394,10 @@ model TentativaQuestao {
   resultadoId              String         @map("id_resultado")
   resultado                ResultadoAluno @relation(fields: [resultadoId], references: [id], onDelete: Cascade)
   questaoId                String         @map("id_questao")
-  questao                  Questao        @relation(fields: [questaoId], references: [id])
+  enunciado                String         @db.Text
+  urlImagem                String?        @map("url_imagem")
+  alternativas             Json
+  respostaCorreta          String         @map("resposta_correta") @db.Char(1)
   ordem                    Int
   alternativaMarcada       String?        @map("alternativa_marcada") @db.Char(1)
   alternativasEmbaralhadas Json?          @map("alternativas_embaralhadas")

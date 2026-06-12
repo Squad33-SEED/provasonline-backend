@@ -86,10 +86,10 @@ def _resolver_resposta_original(alternativas_embaralhadas: list | None, resposta
 def _montar_gabarito(tentativas_questoes: list) -> list[GabaritoItemDetalhado]:
     gabarito: list[GabaritoItemDetalhado] = []
     for tq in sorted(tentativas_questoes, key=lambda x: x.ordem):
-        alternativas_base = tq.questao.alternativas if isinstance(tq.questao.alternativas, list) else []
+        alternativas_base = tq.alternativas if isinstance(tq.alternativas, list) else []
         alternativas_embaralhadas = tq.alternativasEmbaralhadas if isinstance(getattr(tq, "alternativasEmbaralhadas", None), list) else None
 
-        resposta_correta_original = tq.questao.respostaCorreta.upper()
+        resposta_correta_original = tq.respostaCorreta.upper()
         resposta_aluno_exibida = tq.alternativaMarcada.upper() if tq.alternativaMarcada else None
         resposta_aluno_original = _resolver_resposta_original(alternativas_embaralhadas, resposta_aluno_exibida)
 
@@ -104,7 +104,7 @@ def _montar_gabarito(tentativas_questoes: list) -> list[GabaritoItemDetalhado]:
         gabarito.append(GabaritoItemDetalhado(
             ordem=tq.ordem,
             questaoId=tq.questaoId,
-            enunciado=tq.questao.enunciado,
+            enunciado=tq.enunciado,
             alternativaMarcada=texto_marcada,
             alternativaCorreta=texto_correta or resposta_correta_original,
             correta=correta,
@@ -122,7 +122,7 @@ def _contar_acertos(tentativas_questoes: list) -> int:
             alternativas_embaralhadas if isinstance(alternativas_embaralhadas, list) else None,
             tq.alternativaMarcada.upper(),
         )
-        if resposta_original and resposta_original.upper() == tq.questao.respostaCorreta.upper():
+        if resposta_original and resposta_original.upper() == tq.respostaCorreta.upper():
             total += 1
     return total
 
@@ -434,7 +434,7 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
 
     resultado_existente = await db.resultadoaluno.find_first(
         where={"simuladoId": simulado_id, "alunoId": aluno.id},
-        include={"tentativasQuestoes": {"include": {"questao": True}}},
+        include={"tentativasQuestoes": True},
     )
 
     if resultado_existente:
@@ -484,13 +484,13 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
                 if isinstance(alts_raw, list)
                 else [
                     AlternativaParaAluno(letra=a.get("letra", ""), texto=a.get("texto", ""))
-                    for a in (tq.questao.alternativas if isinstance(tq.questao.alternativas, list) else [])
+                    for a in (tq.alternativas if isinstance(tq.alternativas, list) else [])
                 ]
             )
             questoes.append(QuestaoParaAluno(
                 ordem=tq.ordem,
                 questaoId=tq.questaoId,
-                enunciado=tq.questao.enunciado,
+                enunciado=tq.enunciado,
                 alternativas=alts,
                 respostaSalva=tq.alternativaMarcada,
             ))
@@ -528,7 +528,7 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
 
     selecionadas = getattr(simulado, "questoesSelecionadas", None)
     if isinstance(selecionadas, list) and selecionadas:
-        questoes_sorteadas = await montar_questoes_selecionadas(selecionadas)
+        questoes_sorteadas = await montar_questoes_selecionadas(simulado.componenteId, selecionadas)
     else:
         questoes_sorteadas = await sortear_questoes_para_prova(
             componente_id=simulado.componenteId,
@@ -566,7 +566,11 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
         await db.tentativaquestao.create(
             data={
                 "resultado": {"connect": {"id": novo_resultado.id}},
-                "questao": {"connect": {"id": q["questaoId"]}},
+                "questaoId": q["questaoId"],
+                "enunciado": q["enunciado"],
+                "urlImagem": q.get("urlImagem"),
+                "alternativas": Json(alternativas_originais),
+                "respostaCorreta": resposta_correta,
                 "ordem": q["ordem"],
                 **({"alternativasEmbaralhadas": alts_para_salvar} if alts_para_salvar else {}),
             }
@@ -647,7 +651,7 @@ async def submeter_prova(resultado_id: str, usuario=Depends(get_current_user)):
         where={"id": resultado_id},
         include={
             "simulado": {"include": {"componente": True}},
-            "tentativasQuestoes": {"include": {"questao": True}},
+            "tentativasQuestoes": True,
         },
     )
     if not resultado:
@@ -705,7 +709,7 @@ async def ver_resultado(resultado_id: str, usuario=Depends(get_current_user)):
         where={"id": resultado_id},
         include={
             "simulado": {"include": {"componente": True}},
-            "tentativasQuestoes": {"include": {"questao": True}},
+            "tentativasQuestoes": True,
         },
     )
     if not resultado:
@@ -763,7 +767,7 @@ async def historico(usuario=Depends(get_current_user)):
         },
         include={
             "simulado": {"include": {"componente": True}},
-            "tentativasQuestoes": {"include": {"questao": True}},
+            "tentativasQuestoes": True,
         },
         order={"finalizadoEm": "desc"},
     )

@@ -1,21 +1,37 @@
 import asyncio
 import random
 
+from fastapi import HTTPException
+
 from src.database import db
+from src.services import questions_api
+
+DIFICULDADES = ["FACIL", "MEDIO", "DIFICIL"]
+
+
+async def _subject_slug(componente_id: str) -> str:
+    componente = await db.componentecurricular.find_unique(
+        where={"id": componente_id}
+    )
+    if not componente:
+        raise HTTPException(status_code=422, detail="Componente curricular não encontrado")
+    slug = getattr(componente, "questionsSubjectSlug", None)
+    if not slug:
+        raise HTTPException(
+            status_code=422,
+            detail="Componente não está vinculado a uma matéria da API de questões",
+        )
+    return slug
 
 
 async def contar_disponiveis(componente_id: str) -> dict[str, int]:
-    facil_task = db.questao.count(
-        where={"componenteId": componente_id, "dificuldade": "FACIL", "ativa": True}
-    )
-    medio_task = db.questao.count(
-        where={"componenteId": componente_id, "dificuldade": "MEDIO", "ativa": True}
-    )
-    dificil_task = db.questao.count(
-        where={"componenteId": componente_id, "dificuldade": "DIFICIL", "ativa": True}
-    )
+    slug = await _subject_slug(componente_id)
 
-    facil, medio, dificil = await asyncio.gather(facil_task, medio_task, dificil_task)
+    facil, medio, dificil = await asyncio.gather(
+        questions_api.contar_questoes(slug, "FACIL"),
+        questions_api.contar_questoes(slug, "MEDIO"),
+        questions_api.contar_questoes(slug, "DIFICIL"),
+    )
 
     return {"facil": facil, "medio": medio, "dificil": dificil}
 
@@ -81,26 +97,24 @@ def embaralhar_alternativas_questao(
     return resultado, nova_correta
 
 
-def _serializar_questao(questao, ordem: int) -> dict:
-    alternativas_raw = questao.alternativas
-    alternativas = (
-        [{"letra": a.get("letra", ""), "texto": a.get("texto", "")} for a in alternativas_raw]
-        if isinstance(alternativas_raw, list)
-        else []
-    )
+def _serializar_questao(questao_api: dict, ordem: int) -> dict:
+    alternativas, letra_correta = questions_api.montar_alternativas(questao_api)
     return {
         "ordem": ordem,
-        "questaoId": questao.id,
-        "enunciado": questao.enunciado,
+        "questaoId": questao_api.get("id"),
+        "enunciado": questao_api.get("title", ""),
+        "urlImagem": questao_api.get("imageUrl"),
         "alternativas": alternativas,
-        "respostaCorreta": questao.respostaCorreta,
+        "respostaCorreta": letra_correta,
     }
 
 
-async def montar_questoes_selecionadas(questao_ids: list[str]) -> list[dict]:
-    questoes = await db.questao.find_many(
-        where={"id": {"in": questao_ids}, "ativa": True}
-    )
+async def montar_questoes_selecionadas(
+    componente_id: str,
+    questao_ids: list[str],
+) -> list[dict]:
+    slug = await _subject_slug(componente_id)
+    questoes = await questions_api.buscar_questoes_por_ids(slug, questao_ids)
     random.shuffle(questoes)
     return [_serializar_questao(q, ordem) for ordem, q in enumerate(questoes, start=1)]
 
@@ -111,17 +125,19 @@ async def sortear_questoes_para_prova(
     qtd_medio: int,
     qtd_dificil: int,
 ) -> list[dict]:
+    slug = await _subject_slug(componente_id)
+
     faceis, medias, dificeis = await asyncio.gather(
-        db.questao.find_many(
-            where={"componenteId": componente_id, "dificuldade": "FACIL", "ativa": True}
-        ),
-        db.questao.find_many(
-            where={"componenteId": componente_id, "dificuldade": "MEDIO", "ativa": True}
-        ),
-        db.questao.find_many(
-            where={"componenteId": componente_id, "dificuldade": "DIFICIL", "ativa": True}
-        ),
+        questions_api.listar_questoes(slug, "FACIL"),
+        questions_api.listar_questoes(slug, "MEDIO"),
+        questions_api.listar_questoes(slug, "DIFICIL"),
     )
+
+    if qtd_facil > len(faceis) or qtd_medio > len(medias) or qtd_dificil > len(dificeis):
+        raise HTTPException(
+            status_code=422,
+            detail="Banco de questões insuficiente para a composição solicitada",
+        )
 
     selecionadas = (
         random.sample(faceis, qtd_facil)
@@ -131,20 +147,4 @@ async def sortear_questoes_para_prova(
 
     random.shuffle(selecionadas)
 
-    resultado = []
-    for ordem, questao in enumerate(selecionadas, start=1):
-        alternativas_raw = questao.alternativas
-        alternativas = (
-            [{"letra": a.get("letra", ""), "texto": a.get("texto", "")} for a in alternativas_raw]
-            if isinstance(alternativas_raw, list)
-            else []
-        )
-        resultado.append({
-            "ordem": ordem,
-            "questaoId": questao.id,
-            "enunciado": questao.enunciado,
-            "alternativas": alternativas,
-            "respostaCorreta": questao.respostaCorreta,
-        })
-
-    return resultado
+    return [_serializar_questao(q, ordem) for ordem, q in enumerate(selecionadas, start=1)]

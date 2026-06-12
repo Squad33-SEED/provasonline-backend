@@ -21,10 +21,13 @@ from src.schemas import (
     TurmaResumoSimples,
 )
 from src.routers.aluno import _contar_acertos, _agora, _aware
+from src.services import questions_api
 from src.services.sorteio_questoes import (
     contar_disponiveis,
     verificar_disponibilidade,
 )
+
+DIFICULDADE_API_PARA_PROVAS = {"easy": "FACIL", "medium": "MEDIO", "hard": "DIFICIL"}
 
 router = APIRouter(prefix="/simulados", tags=["Simulados"])
 
@@ -124,28 +127,29 @@ async def listar_banco_questoes(
     dificuldade: str | None = Query(default=None),
     _=Depends(require_admin),
 ):
-    where: dict = {"componenteId": componenteId, "ativa": True}
-    if assuntoId:
-        where["assuntoId"] = assuntoId
-    if dificuldade in ("FACIL", "MEDIO", "DIFICIL"):
-        where["dificuldade"] = dificuldade
-
-    questoes = await db.questao.find_many(
-        where=where,
-        include={"assunto": True},
-        order={"criadoEm": "desc"},
-    )
-
-    return [
-        QuestaoBanco(
-            id=q.id,
-            enunciado=q.enunciado,
-            assunto=q.assunto.nome if q.assunto else "",
-            dificuldade=q.dificuldade,
-            componenteId=q.componenteId,
+    componente = await db.componentecurricular.find_unique(where={"id": componenteId})
+    if not componente or not componente.questionsSubjectSlug:
+        raise HTTPException(
+            status_code=422,
+            detail="Componente não está vinculado a uma matéria da API de questões",
         )
-        for q in questoes
-    ]
+
+    slug = componente.questionsSubjectSlug
+    dificuldades = [dificuldade] if dificuldade in ("FACIL", "MEDIO", "DIFICIL") else ["FACIL", "MEDIO", "DIFICIL"]
+
+    resultado: list[QuestaoBanco] = []
+    for dif in dificuldades:
+        for q in await questions_api.listar_questoes(slug, dif):
+            topico = q.get("topic") or {}
+            resultado.append(QuestaoBanco(
+                id=q.get("id"),
+                enunciado=q.get("title", ""),
+                assunto=topico.get("name", ""),
+                dificuldade=dif,
+                componenteId=componenteId,
+            ))
+
+    return resultado
 
 
 @router.post("/gerar-rapido", response_model=SimuladoResponse, status_code=201)
@@ -249,22 +253,25 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
 
     if data.questaoIds:
         ids_unicos = list(dict.fromkeys(data.questaoIds))
-        questoes = await db.questao.find_many(
-            where={
-                "id": {"in": ids_unicos},
-                "componenteId": data.componenteId,
-                "ativa": True,
-            }
-        )
-        if len(questoes) != len(ids_unicos):
+        if not componente.questionsSubjectSlug:
             raise HTTPException(
                 status_code=422,
-                detail="Há questões inválidas ou de outro componente na seleção",
+                detail="Componente não está vinculado a uma matéria da API de questões",
             )
-        qtd_facil = sum(1 for q in questoes if q.dificuldade == "FACIL")
-        qtd_medio = sum(1 for q in questoes if q.dificuldade == "MEDIO")
-        qtd_dificil = sum(1 for q in questoes if q.dificuldade == "DIFICIL")
-        questoes_selecionadas = Json([q.id for q in questoes])
+        slug = componente.questionsSubjectSlug
+        faceis = {q.get("id") for q in await questions_api.listar_questoes(slug, "FACIL")}
+        medias = {q.get("id") for q in await questions_api.listar_questoes(slug, "MEDIO")}
+        dificeis = {q.get("id") for q in await questions_api.listar_questoes(slug, "DIFICIL")}
+        validos = faceis | medias | dificeis
+        if any(qid not in validos for qid in ids_unicos):
+            raise HTTPException(
+                status_code=422,
+                detail="Há questões inválidas ou de outra matéria na seleção",
+            )
+        qtd_facil = sum(1 for qid in ids_unicos if qid in faceis)
+        qtd_medio = sum(1 for qid in ids_unicos if qid in medias)
+        qtd_dificil = sum(1 for qid in ids_unicos if qid in dificeis)
+        questoes_selecionadas = Json(ids_unicos)
     else:
         disponivel, faltas = await verificar_disponibilidade(
             data.componenteId,
@@ -509,7 +516,7 @@ async def relatorio_etapa(simulado_id: str, _=Depends(require_admin)):
                     },
                 }
             },
-            "tentativasQuestoes": {"include": {"questao": True}},
+            "tentativasQuestoes": True,
         },
         order={"finalizadoEm": "desc"},
     )
