@@ -34,7 +34,7 @@ _INCLUDE_COMPLETO = {
 }
 
 
-def _serializar_simulado(simulado_obj) -> SimuladoResponse:
+def _serializar_simulado(simulado_obj, total_inscritos: int = 0) -> SimuladoResponse:
     componente = simulado_obj.componente
     modalidade = componente.modalidade
     total = simulado_obj.qtdFacil + simulado_obj.qtdMedio + simulado_obj.qtdDificil
@@ -67,6 +67,8 @@ def _serializar_simulado(simulado_obj) -> SimuladoResponse:
         qtdDificil=simulado_obj.qtdDificil,
         totalQuestoes=total,
         vagas=simulado_obj.vagas,
+        totalInscritos=total_inscritos,
+        vagasDisponiveis=max(simulado_obj.vagas - total_inscritos, 0),
         duracaoMinutos=simulado_obj.duracaoMinutos,
         janelaInicio=simulado_obj.janelaInicio,
         janelaFim=simulado_obj.janelaFim,
@@ -359,7 +361,22 @@ async def listar_simulados(_=Depends(get_current_user)):
         include=_INCLUDE_COMPLETO,
         order={"criadoEm": "desc"},
     )
-    return [_serializar_simulado(s) for s in simulados]
+
+    inscritos_por_simulado: dict[str, int] = {}
+    if simulados:
+        contagens = await db.inscricaoaluno.group_by(
+            by=["simuladoId"],
+            where={"simuladoId": {"in": [s.id for s in simulados]}},
+            count=True,
+        )
+        inscritos_por_simulado = {
+            c["simuladoId"]: c["_count"]["_all"] for c in contagens
+        }
+
+    return [
+        _serializar_simulado(s, inscritos_por_simulado.get(s.id, 0))
+        for s in simulados
+    ]
 
 
 
@@ -501,7 +518,11 @@ async def buscar_simulado(simulado_id: str, _=Depends(get_current_user)):
     )
     if not simulado:
         raise HTTPException(status_code=404, detail="Simulado não encontrado")
-    return _serializar_simulado(simulado)
+
+    total_inscritos = await db.inscricaoaluno.count(
+        where={"simuladoId": simulado_id}
+    )
+    return _serializar_simulado(simulado, total_inscritos)
 
 
 @router.get("/{simulado_id}/relatorio", response_model=RelatorioEtapaResponse)

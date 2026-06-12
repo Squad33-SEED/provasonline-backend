@@ -251,6 +251,8 @@ class SimuladoResponse(BaseModel):
     qtdDificil: int
     totalQuestoes: int
     vagas: int
+    totalInscritos: int = 0
+    vagasDisponiveis: int = 0
     duracaoMinutos: int
     janelaInicio: datetime
     janelaFim: datetime
