@@ -5,6 +5,67 @@ from httpx import ASGITransport, AsyncClient
 from main import app
 from src.database import db
 from src.routers.auth import limiter
+from src.services import questions_api
+
+
+def _mock_bank() -> dict[str, list[dict]]:
+    bank: dict[str, list[dict]] = {}
+    for dif in ("FACIL", "MEDIO", "DIFICIL"):
+        itens = []
+        for i in range(10):
+            itens.append({
+                "id": f"mock-{dif}-{i}",
+                "title": f"Questao mock {dif} {i}",
+                "correctAnswer": "Alternativa correta",
+                "incorrectAnswers": [
+                    "Errada 1", "Errada 2", "Errada 3", "Errada 4",
+                ],
+                "difficulty": questions_api.DIFICULDADE_PROVAS_PARA_API[dif],
+                "imageUrl": None,
+                "topic": {
+                    "name": "Topico Mock",
+                    "slug": "topico-mock",
+                    "subject": {"name": "Materia Mock", "slug": "materia-mock"},
+                },
+            })
+        bank[dif] = itens
+    return bank
+
+
+MOCK_BANK = _mock_bank()
+MOCK_IDS = {dif: [q["id"] for q in itens] for dif, itens in MOCK_BANK.items()}
+
+
+@pytest.fixture(autouse=True)
+def mock_questions_api(monkeypatch):
+    async def fake_listar(subject_slug, dificuldade):
+        return [dict(q) for q in MOCK_BANK[dificuldade]]
+
+    async def fake_contar(subject_slug, dificuldade):
+        return len(MOCK_BANK[dificuldade])
+
+    async def fake_por_ids(subject_slug, ids):
+        desejados = set(ids)
+        out = []
+        for itens in MOCK_BANK.values():
+            for q in itens:
+                if q["id"] in desejados:
+                    out.append(dict(q))
+        return out
+
+    monkeypatch.setattr(questions_api, "listar_questoes", fake_listar)
+    monkeypatch.setattr(questions_api, "contar_questoes", fake_contar)
+    monkeypatch.setattr(questions_api, "buscar_questoes_por_ids", fake_por_ids)
+    yield
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def garantir_subject_slug(conexao_db):
+    await db.componentecurricular.update_many(
+        where={"questionsSubjectSlug": None},
+        data={"questionsSubjectSlug": "materia-mock"},
+    )
+    yield
 
 
 CONTAS = {

@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
+from prisma import Json
 
 from src.database import db
 
@@ -10,19 +11,26 @@ def _agora():
     return datetime.now(timezone.utc)
 
 
+_ALTERNATIVAS = [
+    {"letra": "A", "texto": "Alternativa A"},
+    {"letra": "B", "texto": "Alternativa B"},
+    {"letra": "C", "texto": "Alternativa C"},
+    {"letra": "D", "texto": "Alternativa D"},
+]
+
+
 @pytest_asyncio.fixture
 async def etapa_com_resultado(conexao_db):
     u = await db.usuario.find_unique(where={"cpf": "11122233396"})
     aluno = await db.aluno.find_unique(where={"usuarioId": u.id})
-    questoes = await db.questao.find_many(where={"ativa": True}, take=2)
-    q1, q2 = questoes[0], questoes[1]
+    componente = await db.componentecurricular.find_first(where={"ativo": True})
     professor = await db.professor.find_first()
     agora = _agora()
 
     simulado = await db.simulado.create(
         data={
             "titulo": "Etapa Relatorio TESTE",
-            "componente": {"connect": {"id": q1.componenteId}},
+            "componente": {"connect": {"id": componente.id}},
             "professor": {"connect": {"id": professor.id}},
             "qtdFacil": 0, "qtdMedio": 0, "qtdDificil": 0,
             "vagas": 5, "duracaoMinutos": 30,
@@ -42,21 +50,26 @@ async def etapa_com_resultado(conexao_db):
             "finalizadoEm": agora,
         }
     )
-    errada = "A" if q2.respostaCorreta.upper() != "A" else "B"
     await db.tentativaquestao.create(
         data={
             "resultado": {"connect": {"id": resultado.id}},
-            "questao": {"connect": {"id": q1.id}},
+            "questaoId": "mock-rel-1",
+            "enunciado": "Questao relatorio 1",
+            "alternativas": Json(_ALTERNATIVAS),
+            "respostaCorreta": "A",
             "ordem": 1,
-            "alternativaMarcada": q1.respostaCorreta.upper(),
+            "alternativaMarcada": "A",
         }
     )
     await db.tentativaquestao.create(
         data={
             "resultado": {"connect": {"id": resultado.id}},
-            "questao": {"connect": {"id": q2.id}},
+            "questaoId": "mock-rel-2",
+            "enunciado": "Questao relatorio 2",
+            "alternativas": Json(_ALTERNATIVAS),
+            "respostaCorreta": "A",
             "ordem": 2,
-            "alternativaMarcada": errada,
+            "alternativaMarcada": "B",
         }
     )
 
