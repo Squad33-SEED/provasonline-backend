@@ -224,14 +224,18 @@ async def gerar_rapido(data: GeracaoRapidaCreate, _=Depends(require_admin)):
 
 @router.post("", response_model=SimuladoResponse, status_code=201)
 async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
-    componente = await db.componentecurricular.find_unique(
-        where={"id": data.componenteId},
+    componente_ids = list(dict.fromkeys(data.componenteIds or [data.componenteId]))
+    componente_principal_id = componente_ids[0]
+
+    componentes = await db.componentecurricular.find_many(
+        where={"id": {"in": componente_ids}, "ativo": True},
         include={"modalidade": True},
     )
-    if not componente or not componente.ativo:
+
+    if len(componentes) != len(componente_ids):
         raise HTTPException(
             status_code=422,
-            detail="Componente curricular não encontrado ou inativo",
+            detail="Um ou mais componentes curriculares não foram encontrados ou estão inativos",
         )
 
     if data.geraCertificado:
@@ -252,7 +256,7 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
         questoes = await db.questao.find_many(
             where={
                 "id": {"in": ids_unicos},
-                "componenteId": data.componenteId,
+                "componenteId": {"in": componente_ids},
                 "ativa": True,
             }
         )
@@ -266,17 +270,29 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
         qtd_dificil = sum(1 for q in questoes if q.dificuldade == "DIFICIL")
         questoes_selecionadas = Json([q.id for q in questoes])
     else:
-        disponivel, faltas = await verificar_disponibilidade(
-            data.componenteId,
-            qtd_facil,
-            qtd_medio,
-            qtd_dificil,
+        questoes_disponiveis = await db.questao.find_many(
+            where={
+                "componenteId": {"in": componente_ids},
+                "ativa": True,
+            }
         )
-        if not disponivel:
-            raise HTTPException(
-                status_code=422,
-                detail=" · ".join(faltas),
-            )
+
+        disponiveis = {
+            "FACIL": sum(1 for q in questoes_disponiveis if q.dificuldade == "FACIL"),
+            "MEDIO": sum(1 for q in questoes_disponiveis if q.dificuldade == "MEDIO"),
+            "DIFICIL": sum(1 for q in questoes_disponiveis if q.dificuldade == "DIFICIL"),
+        }
+
+        faltas = []
+        if qtd_facil > disponiveis["FACIL"]:
+            faltas.append(f"Faltam questões fáceis: solicitado {qtd_facil}, disponível {disponiveis['FACIL']}")
+        if qtd_medio > disponiveis["MEDIO"]:
+            faltas.append(f"Faltam questões médias: solicitado {qtd_medio}, disponível {disponiveis['MEDIO']}")
+        if qtd_dificil > disponiveis["DIFICIL"]:
+            faltas.append(f"Faltam questões difíceis: solicitado {qtd_dificil}, disponível {disponiveis['DIFICIL']}")
+
+        if faltas:
+            raise HTTPException(status_code=422, detail=" · ".join(faltas))
 
     turmas_validas: list[str] = []
     for turma_id in data.turmaIds:
@@ -299,7 +315,8 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
         data={
             "titulo": data.titulo,
             "descricao": data.descricao,
-            "componente": {"connect": {"id": data.componenteId}},
+            "componente": {"connect": {"id": componente_principal_id}},
+            "componenteIds": Json(componente_ids),
             "professor": {"connect": {"id": professor_demo.id}},
             "qtdFacil": qtd_facil,
             "qtdMedio": qtd_medio,

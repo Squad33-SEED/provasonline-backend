@@ -314,6 +314,7 @@ model Simulado {
   professor            Professor            @relation(fields: [professorId], references: [id])
   componenteId         String               @map("id_componente")
   componente           ComponenteCurricular @relation(fields: [componenteId], references: [id])
+  componenteIds        Json?                @map("componente_ids")
   faixaId              String?              @map("id_faixa")
   faixa                FaixaSerie?          @relation(fields: [faixaId], references: [id])
   titulo               String               @db.VarChar(200)
