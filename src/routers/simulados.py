@@ -24,7 +24,7 @@ from src.routers.aluno import _contar_acertos, _agora, _aware
 from src.services import questions_api
 from src.services.sorteio_questoes import (
     contar_disponiveis,
-    verificar_disponibilidade,
+    verificar_disponibilidade_multi,
 )
 
 DIFICULDADE_API_PARA_PROVAS = {"easy": "FACIL", "medium": "MEDIO", "hard": "DIFICIL"}
@@ -283,28 +283,12 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
         qtd_dificil = sum(1 for qid in ids_unicos if qid in dificeis)
         questoes_selecionadas = Json(ids_unicos)
     else:
-        questoes_disponiveis = await db.questao.find_many(
-            where={
-                "componenteId": {"in": componente_ids},
-                "ativa": True,
-            }
+        # Sorteio automático: valida disponibilidade na API de questões,
+        # somando o banco de TODOS os componentes da etapa (estilo ENEM).
+        disponivel, faltas = await verificar_disponibilidade_multi(
+            componente_ids, qtd_facil, qtd_medio, qtd_dificil
         )
-
-        disponiveis = {
-            "FACIL": sum(1 for q in questoes_disponiveis if q.dificuldade == "FACIL"),
-            "MEDIO": sum(1 for q in questoes_disponiveis if q.dificuldade == "MEDIO"),
-            "DIFICIL": sum(1 for q in questoes_disponiveis if q.dificuldade == "DIFICIL"),
-        }
-
-        faltas = []
-        if qtd_facil > disponiveis["FACIL"]:
-            faltas.append(f"Faltam questões fáceis: solicitado {qtd_facil}, disponível {disponiveis['FACIL']}")
-        if qtd_medio > disponiveis["MEDIO"]:
-            faltas.append(f"Faltam questões médias: solicitado {qtd_medio}, disponível {disponiveis['MEDIO']}")
-        if qtd_dificil > disponiveis["DIFICIL"]:
-            faltas.append(f"Faltam questões difíceis: solicitado {qtd_dificil}, disponível {disponiveis['DIFICIL']}")
-
-        if faltas:
+        if not disponivel:
             raise HTTPException(status_code=422, detail=" · ".join(faltas))
 
     turmas_validas: list[str] = []
@@ -329,6 +313,7 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
             "titulo": data.titulo,
             "descricao": data.descricao,
             "componente": {"connect": {"id": componente_principal_id}},
+            "componenteIds": Json(componente_ids),
             "professor": {"connect": {"id": professor_demo.id}},
             "qtdFacil": qtd_facil,
             "qtdMedio": qtd_medio,
