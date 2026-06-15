@@ -1,4 +1,3 @@
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -6,6 +5,7 @@ import pytest_asyncio
 from prisma import Json
 
 from src.database import db
+from tests.conftest import MOCK_IDS
 
 
 def _agora():
@@ -13,12 +13,8 @@ def _agora():
 
 
 async def _selecao(qtd=3):
-    questoes = await db.questao.find_many(where={"ativa": True})
-    por_comp = defaultdict(list)
-    for q in questoes:
-        por_comp[q.componenteId].append(q.id)
-    comp = max(por_comp, key=lambda c: len(por_comp[c]))
-    return comp, por_comp[comp][:qtd]
+    comp = await db.componentecurricular.find_first(where={"ativo": True})
+    return comp.id, MOCK_IDS["FACIL"][:qtd]
 
 
 @pytest.mark.asyncio
@@ -42,13 +38,10 @@ async def test_criar_prova_manual(client, token_admin, auth):
 
 
 @pytest.mark.asyncio
-async def test_criar_prova_manual_rejeita_questao_de_outro_componente(
+async def test_criar_prova_manual_rejeita_questao_invalida(
     client, token_admin, auth
 ):
     comp, ids = await _selecao(2)
-    outra = await db.questao.find_first(
-        where={"componenteId": {"not": comp}, "ativa": True}
-    )
     agora = _agora()
     payload = {
         "titulo": "Prova Manual Invalida TESTE",
@@ -57,7 +50,7 @@ async def test_criar_prova_manual_rejeita_questao_de_outro_componente(
         "vagas": 30, "duracaoMinutos": 60,
         "janelaInicio": (agora + timedelta(minutes=10)).isoformat(),
         "janelaFim": (agora + timedelta(days=1)).isoformat(),
-        "questaoIds": ids + [outra.id],
+        "questaoIds": ids + ["mock-INEXISTENTE"],
         "embaralharAlternativas": True,
     }
     r = await client.post("/simulados", json=payload, headers=auth(token_admin))
