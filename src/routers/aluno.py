@@ -37,8 +37,8 @@ ROTULOS_VIOLACAO = {
 }
 from src.services.sorteio_questoes import (
     embaralhar_alternativas_questao,
-    montar_questoes_selecionadas,
-    sortear_questoes_para_prova,
+    montar_questoes_selecionadas_multi,
+    sortear_questoes_para_prova_multi,
 )
 
 router = APIRouter(prefix="/aluno", tags=["Aluno"])
@@ -564,35 +564,24 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
                 detail="Limite de 3 tentativas anuais para este nível foi atingido",
             )
 
+    # Resolve todos os componentes da etapa (multi-componente estilo ENEM);
+    # fallback para o componente principal em etapas antigas sem componenteIds.
+    componente_ids = getattr(simulado, "componenteIds", None)
+    if not isinstance(componente_ids, list) or not componente_ids:
+        componente_ids = [simulado.componenteId]
+
     selecionadas = getattr(simulado, "questoesSelecionadas", None)
 
     if isinstance(selecionadas, list) and selecionadas:
-        questoes_sorteadas = await montar_questoes_selecionadas(simulado.componenteId, selecionadas)
+        questoes_sorteadas = await montar_questoes_selecionadas_multi(
+            componente_ids, selecionadas
+        )
     else:
-        componente_ids = getattr(simulado, "componenteIds", None)
-
-        if not isinstance(componente_ids, list) or not componente_ids:
-            componente_ids = [simulado.componenteId]
-
-        questoes_disponiveis = await db.questao.find_many(
-            where={
-                "componenteId": {"in": componente_ids},
-                "ativa": True,
-            }
-        )
-
-        faceis = [q for q in questoes_disponiveis if q.dificuldade == "FACIL"]
-        medias = [q for q in questoes_disponiveis if q.dificuldade == "MEDIO"]
-        dificeis = [q for q in questoes_disponiveis if q.dificuldade == "DIFICIL"]
-
-        selecionadas_sorteio = (
-            faceis[: simulado.qtdFacil]
-            + medias[: simulado.qtdMedio]
-            + dificeis[: simulado.qtdDificil]
-        )
-
-        questoes_sorteadas = await montar_questoes_selecionadas(
-            [q.id for q in selecionadas_sorteio]
+        questoes_sorteadas = await sortear_questoes_para_prova_multi(
+            componente_ids,
+            simulado.qtdFacil,
+            simulado.qtdMedio,
+            simulado.qtdDificil,
         )
 
     iniciado_em = _agora()
