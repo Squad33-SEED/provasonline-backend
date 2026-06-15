@@ -37,7 +37,7 @@ _INCLUDE_COMPLETO = {
 }
 
 
-def _serializar_simulado(simulado_obj) -> SimuladoResponse:
+def _serializar_simulado(simulado_obj, total_inscritos: int = 0) -> SimuladoResponse:
     componente = simulado_obj.componente
     modalidade = componente.modalidade
     total = simulado_obj.qtdFacil + simulado_obj.qtdMedio + simulado_obj.qtdDificil
@@ -70,6 +70,8 @@ def _serializar_simulado(simulado_obj) -> SimuladoResponse:
         qtdDificil=simulado_obj.qtdDificil,
         totalQuestoes=total,
         vagas=simulado_obj.vagas,
+        totalInscritos=total_inscritos,
+        vagasDisponiveis=max(simulado_obj.vagas - total_inscritos, 0),
         duracaoMinutos=simulado_obj.duracaoMinutos,
         janelaInicio=simulado_obj.janelaInicio,
         janelaFim=simulado_obj.janelaFim,
@@ -228,14 +230,18 @@ async def gerar_rapido(data: GeracaoRapidaCreate, _=Depends(require_admin)):
 
 @router.post("", response_model=SimuladoResponse, status_code=201)
 async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
-    componente = await db.componentecurricular.find_unique(
-        where={"id": data.componenteId},
+    componente_ids = list(dict.fromkeys(data.componenteIds or [data.componenteId]))
+    componente_principal_id = componente_ids[0]
+
+    componentes = await db.componentecurricular.find_many(
+        where={"id": {"in": componente_ids}, "ativo": True},
         include={"modalidade": True},
     )
-    if not componente or not componente.ativo:
+
+    if len(componentes) != len(componente_ids):
         raise HTTPException(
             status_code=422,
-            detail="Componente curricular não encontrado ou inativo",
+            detail="Um ou mais componentes curriculares não foram encontrados ou estão inativos",
         )
 
     if data.geraCertificado:
@@ -253,15 +259,19 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
 
     if data.questaoIds:
         ids_unicos = list(dict.fromkeys(data.questaoIds))
-        if not componente.questionsSubjectSlug:
+        slugs = [c.questionsSubjectSlug for c in componentes if c.questionsSubjectSlug]
+        if not slugs:
             raise HTTPException(
                 status_code=422,
                 detail="Componente não está vinculado a uma matéria da API de questões",
             )
-        slug = componente.questionsSubjectSlug
-        faceis = {q.get("id") for q in await questions_api.listar_questoes(slug, "FACIL")}
-        medias = {q.get("id") for q in await questions_api.listar_questoes(slug, "MEDIO")}
-        dificeis = {q.get("id") for q in await questions_api.listar_questoes(slug, "DIFICIL")}
+        faceis: set[str] = set()
+        medias: set[str] = set()
+        dificeis: set[str] = set()
+        for slug in slugs:
+            faceis |= {q.get("id") for q in await questions_api.listar_questoes(slug, "FACIL")}
+            medias |= {q.get("id") for q in await questions_api.listar_questoes(slug, "MEDIO")}
+            dificeis |= {q.get("id") for q in await questions_api.listar_questoes(slug, "DIFICIL")}
         validos = faceis | medias | dificeis
         if any(qid not in validos for qid in ids_unicos):
             raise HTTPException(
@@ -273,17 +283,29 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
         qtd_dificil = sum(1 for qid in ids_unicos if qid in dificeis)
         questoes_selecionadas = Json(ids_unicos)
     else:
-        disponivel, faltas = await verificar_disponibilidade(
-            data.componenteId,
-            qtd_facil,
-            qtd_medio,
-            qtd_dificil,
+        questoes_disponiveis = await db.questao.find_many(
+            where={
+                "componenteId": {"in": componente_ids},
+                "ativa": True,
+            }
         )
-        if not disponivel:
-            raise HTTPException(
-                status_code=422,
-                detail=" · ".join(faltas),
-            )
+
+        disponiveis = {
+            "FACIL": sum(1 for q in questoes_disponiveis if q.dificuldade == "FACIL"),
+            "MEDIO": sum(1 for q in questoes_disponiveis if q.dificuldade == "MEDIO"),
+            "DIFICIL": sum(1 for q in questoes_disponiveis if q.dificuldade == "DIFICIL"),
+        }
+
+        faltas = []
+        if qtd_facil > disponiveis["FACIL"]:
+            faltas.append(f"Faltam questões fáceis: solicitado {qtd_facil}, disponível {disponiveis['FACIL']}")
+        if qtd_medio > disponiveis["MEDIO"]:
+            faltas.append(f"Faltam questões médias: solicitado {qtd_medio}, disponível {disponiveis['MEDIO']}")
+        if qtd_dificil > disponiveis["DIFICIL"]:
+            faltas.append(f"Faltam questões difíceis: solicitado {qtd_dificil}, disponível {disponiveis['DIFICIL']}")
+
+        if faltas:
+            raise HTTPException(status_code=422, detail=" · ".join(faltas))
 
     turmas_validas: list[str] = []
     for turma_id in data.turmaIds:
@@ -306,7 +328,7 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
         data={
             "titulo": data.titulo,
             "descricao": data.descricao,
-            "componente": {"connect": {"id": data.componenteId}},
+            "componente": {"connect": {"id": componente_principal_id}},
             "professor": {"connect": {"id": professor_demo.id}},
             "qtdFacil": qtd_facil,
             "qtdMedio": qtd_medio,
@@ -349,7 +371,22 @@ async def listar_simulados(_=Depends(get_current_user)):
         include=_INCLUDE_COMPLETO,
         order={"criadoEm": "desc"},
     )
-    return [_serializar_simulado(s) for s in simulados]
+
+    inscritos_por_simulado: dict[str, int] = {}
+    if simulados:
+        contagens = await db.inscricaoaluno.group_by(
+            by=["simuladoId"],
+            where={"simuladoId": {"in": [s.id for s in simulados]}},
+            count=True,
+        )
+        inscritos_por_simulado = {
+            c["simuladoId"]: c["_count"]["_all"] for c in contagens
+        }
+
+    return [
+        _serializar_simulado(s, inscritos_por_simulado.get(s.id, 0))
+        for s in simulados
+    ]
 
 
 
@@ -491,7 +528,11 @@ async def buscar_simulado(simulado_id: str, _=Depends(get_current_user)):
     )
     if not simulado:
         raise HTTPException(status_code=404, detail="Simulado não encontrado")
-    return _serializar_simulado(simulado)
+
+    total_inscritos = await db.inscricaoaluno.count(
+        where={"simuladoId": simulado_id}
+    )
+    return _serializar_simulado(simulado, total_inscritos)
 
 
 @router.get("/{simulado_id}/relatorio", response_model=RelatorioEtapaResponse)

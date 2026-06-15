@@ -249,9 +249,12 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
         order={"janelaInicio": "asc"},
     )
 
+    tipo_candidato = getattr(usuario, "tipoCandidato", "REGULAR")
+
     simulados_visiveis = [
         s for s in simulados
-        if not s.aplicacoes or any(a.turmaId in aluno_turma_ids for a in s.aplicacoes)
+        if (not s.aplicacoes or any(a.turmaId in aluno_turma_ids for a in s.aplicacoes))
+        and (tipo_candidato != "EXTERNO" or getattr(s, "geraCertificado", False))
     ]
 
     resultado_map: dict = {}
@@ -266,6 +269,7 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
             resultado_map[r.simuladoId] = r
 
     inscricoes_set: set[str] = set()
+    inscritos_por_simulado: dict[str, int] = {}
     if simulados_visiveis:
         inscricoes = await db.inscricaoaluno.find_many(
             where={
@@ -274,6 +278,15 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
             }
         )
         inscricoes_set = {i.simuladoId for i in inscricoes}
+
+        contagens = await db.inscricaoaluno.group_by(
+            by=["simuladoId"],
+            where={"simuladoId": {"in": [s.id for s in simulados_visiveis]}},
+            count=True,
+        )
+        inscritos_por_simulado = {
+            c["simuladoId"]: c["_count"]["_all"] for c in contagens
+        }
 
     return [
         EtapaDisponivelResponse(
@@ -288,6 +301,8 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
             duracaoMinutos=s.duracaoMinutos,
             totalQuestoes=s.qtdFacil + s.qtdMedio + s.qtdDificil,
             vagas=s.vagas,
+            vagasTotais=s.vagas,
+            vagasDisponiveis=max(s.vagas - inscritos_por_simulado.get(s.id, 0), 0),
             janelaInicio=s.janelaInicio,
             janelaFim=s.janelaFim,
             ativa=_aware(s.janelaInicio) <= agora <= _aware(s.janelaFim),
@@ -403,6 +418,15 @@ async def inscrever_em_prova(simulado_id: str, usuario=Depends(get_current_user)
         where={"simuladoId_alunoId": {"simuladoId": simulado_id, "alunoId": aluno.id}}
     )
     if not existente:
+        total_inscritos = await db.inscricaoaluno.count(
+            where={"simuladoId": simulado_id}
+        )
+        if total_inscritos >= simulado.vagas:
+            raise HTTPException(
+                status_code=422,
+                detail="Não há mais vagas disponíveis para esta prova",
+            )
+
         await db.inscricaoaluno.create(
             data={
                 "simulado": {"connect": {"id": simulado_id}},
@@ -422,8 +446,22 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
         where={"id": simulado_id},
         include={"componente": True},
     )
-    if not simulado or simulado.status != "PUBLICADO":
-        raise HTTPException(status_code=404, detail="Etapa não encontrada")
+    gera_cert = getattr(simulado, "geraCertificado", False)
+    nivel_id = getattr(simulado, "nivelEnsinoId", None)
+    if gera_cert and nivel_id:
+        nivel = await db.nivelensino.find_unique(where={"id": nivel_id})
+        tipo_candidato = getattr(usuario, "tipoCandidato", "REGULAR")
+        prereq_validado = getattr(usuario, "prereqValidado", True)
+        if (
+            nivel
+            and getattr(nivel, "ordem", 1) > 1
+            and tipo_candidato == "EXTERNO"
+            and not prereq_validado
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Pré-requisito de Ensino Fundamental II não validado para este candidato",
+            )
 
     agora = _agora()
     janela_inicio = _aware(simulado.janelaInicio)
@@ -527,14 +565,34 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
             )
 
     selecionadas = getattr(simulado, "questoesSelecionadas", None)
+
     if isinstance(selecionadas, list) and selecionadas:
         questoes_sorteadas = await montar_questoes_selecionadas(simulado.componenteId, selecionadas)
     else:
-        questoes_sorteadas = await sortear_questoes_para_prova(
-            componente_id=simulado.componenteId,
-            qtd_facil=simulado.qtdFacil,
-            qtd_medio=simulado.qtdMedio,
-            qtd_dificil=simulado.qtdDificil,
+        componente_ids = getattr(simulado, "componenteIds", None)
+
+        if not isinstance(componente_ids, list) or not componente_ids:
+            componente_ids = [simulado.componenteId]
+
+        questoes_disponiveis = await db.questao.find_many(
+            where={
+                "componenteId": {"in": componente_ids},
+                "ativa": True,
+            }
+        )
+
+        faceis = [q for q in questoes_disponiveis if q.dificuldade == "FACIL"]
+        medias = [q for q in questoes_disponiveis if q.dificuldade == "MEDIO"]
+        dificeis = [q for q in questoes_disponiveis if q.dificuldade == "DIFICIL"]
+
+        selecionadas_sorteio = (
+            faceis[: simulado.qtdFacil]
+            + medias[: simulado.qtdMedio]
+            + dificeis[: simulado.qtdDificil]
+        )
+
+        questoes_sorteadas = await montar_questoes_selecionadas(
+            [q.id for q in selecionadas_sorteio]
         )
 
     iniciado_em = _agora()
@@ -795,3 +853,37 @@ async def historico(usuario=Depends(get_current_user)):
         ))
 
     return historico_items
+
+@router.get("/prova-em-andamento")
+async def prova_em_andamento(usuario=Depends(get_current_user)):
+    _require_aluno(usuario)
+    aluno = await _buscar_aluno_do_usuario(usuario.id)
+
+    resultado = await db.resultadoaluno.find_first(
+        where={
+            "alunoId": aluno.id,
+            "statusResultado": "EM_ANDAMENTO",
+        },
+        include={"simulado": True},
+    )
+
+    if not resultado or not resultado.simulado:
+        return {"emAndamento": False}
+
+    agora = _agora()
+    iniciado_em = _aware(resultado.iniciadoEm)
+    expira_em = iniciado_em + timedelta(minutes=resultado.simulado.duracaoMinutos)
+
+    if agora > expira_em:
+        await db.resultadoaluno.update(
+            where={"id": resultado.id},
+            data={"statusResultado": "EXPIRADO"},
+        )
+        return {"emAndamento": False}
+
+    return {
+        "emAndamento": True,
+        "simuladoId": resultado.simuladoId,
+        "resultadoId": resultado.id,
+        "expiraEm": expira_em.isoformat(),
+    }
