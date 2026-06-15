@@ -758,7 +758,29 @@ class AproveitamentoNivel(BaseModel):
     totalComponentes: int
     aprovados: int
     componentes: list[ComponenteProgresso]
-    
+
+class IpCreate(BaseModel):
+    ip: str = Field(min_length=1, max_length=45)
+    descricao: str | None = None
+
+
+class IpUpdate(BaseModel):
+    ip: str | None = Field(default=None, min_length=1, max_length=45)
+    descricao: str | None = None
+    ativo: bool | None = None
+
+
+class IpResponse(BaseModel):
+    id: str
+    ip: str
+    descricao: str | None = None
+    ativo: bool
+    criadoEm: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class ProvaEmAndamentoResponse(BaseModel):
     emAndamento: bool
     simuladoId: str | None = None
