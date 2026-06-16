@@ -13,9 +13,18 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     QUESTIONS_API_BASE_URL: str = "https://questions.zenixcode.cloud"
+    # Origens permitidas no CORS (separadas por vírgula). Default: front de
+    # produção + dev local. Em prod, sobrescreva via env se a URL mudar.
+    CORS_ORIGINS: str = (
+        "https://provasonline-frontend-lksp.vercel.app,http://localhost:3000"
+    )
 
     class Config:
         env_file = ".env"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
 
 settings = Settings()
@@ -36,7 +45,6 @@ def hash_token(token: str) -> str:
 
 
 def create_access_token(data: dict) -> tuple[str, datetime]:
-    import uuid
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {**data, "exp": expire, "jti": str(uuid.uuid4())}
     token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
