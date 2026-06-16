@@ -297,7 +297,7 @@ class IniciarProvaResponse(BaseModel):
 
 class RespostaItem(BaseModel):
     questaoId: str
-    resposta: str = Field(pattern=r"^[ABCDabcd]$")
+    resposta: str = Field(pattern=r"^[A-Ea-e]$")
 
 
 class AutoSaveRequest(BaseModel):
