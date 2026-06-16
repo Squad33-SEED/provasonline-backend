@@ -37,10 +37,48 @@ _INCLUDE_COMPLETO = {
 }
 
 
-def _serializar_simulado(simulado_obj, total_inscritos: int = 0) -> SimuladoResponse:
-    componente = simulado_obj.componente
-    modalidade = componente.modalidade
+def _resumo_componente(componente) -> ComponenteResumo:
+    return ComponenteResumo(
+        id=componente.id,
+        nome=componente.nome,
+        modalidade=ModalidadeResumo(
+            id=componente.modalidade.id,
+            nome=componente.modalidade.nome,
+        ),
+    )
+
+
+async def _mapa_componentes(simulados) -> dict[str, ComponenteResumo]:
+    """Pré-carrega (em 1 query) os componentes referenciados em componenteIds."""
+    ids: set[str] = set()
+    for s in simulados:
+        cids = getattr(s, "componenteIds", None)
+        if isinstance(cids, list):
+            ids.update(cids)
+    if not ids:
+        return {}
+    componentes = await db.componentecurricular.find_many(
+        where={"id": {"in": list(ids)}},
+        include={"modalidade": True},
+    )
+    return {c.id: _resumo_componente(c) for c in componentes}
+
+
+def _serializar_simulado(
+    simulado_obj,
+    total_inscritos: int = 0,
+    componentes_por_id: dict[str, ComponenteResumo] | None = None,
+) -> SimuladoResponse:
+    principal = _resumo_componente(simulado_obj.componente)
     total = simulado_obj.qtdFacil + simulado_obj.qtdMedio + simulado_obj.qtdDificil
+
+    ids = getattr(simulado_obj, "componenteIds", None)
+    if isinstance(ids, list) and ids and componentes_por_id:
+        componentes = [componentes_por_id[i] for i in ids if i in componentes_por_id]
+    else:
+        componentes = []
+    if not componentes:
+        componentes = [principal]
 
     turmas: list[TurmaResumoSimples] = []
     if simulado_obj.aplicacoes:
@@ -57,14 +95,8 @@ def _serializar_simulado(simulado_obj, total_inscritos: int = 0) -> SimuladoResp
         id=simulado_obj.id,
         titulo=simulado_obj.titulo,
         descricao=simulado_obj.descricao,
-        componente=ComponenteResumo(
-            id=componente.id,
-            nome=componente.nome,
-            modalidade=ModalidadeResumo(
-                id=modalidade.id,
-                nome=modalidade.nome,
-            ),
-        ),
+        componente=principal,
+        componentes=componentes,
         qtdFacil=simulado_obj.qtdFacil,
         qtdMedio=simulado_obj.qtdMedio,
         qtdDificil=simulado_obj.qtdDificil,
@@ -225,7 +257,8 @@ async def gerar_rapido(data: GeracaoRapidaCreate, _=Depends(require_admin)):
         include=_INCLUDE_COMPLETO,
     )
 
-    return _serializar_simulado(simulado_completo)
+    mapa_comp = await _mapa_componentes([simulado_completo])
+    return _serializar_simulado(simulado_completo, componentes_por_id=mapa_comp)
 
 
 @router.post("", response_model=SimuladoResponse, status_code=201)
@@ -347,7 +380,8 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
         include=_INCLUDE_COMPLETO,
     )
 
-    return _serializar_simulado(simulado_completo)
+    mapa_comp = await _mapa_componentes([simulado_completo])
+    return _serializar_simulado(simulado_completo, componentes_por_id=mapa_comp)
 
 
 @router.get("", response_model=list[SimuladoResponse])
@@ -368,8 +402,9 @@ async def listar_simulados(_=Depends(get_current_user)):
             c["simuladoId"]: c["_count"]["_all"] for c in contagens
         }
 
+    mapa_comp = await _mapa_componentes(simulados)
     return [
-        _serializar_simulado(s, inscritos_por_simulado.get(s.id, 0))
+        _serializar_simulado(s, inscritos_por_simulado.get(s.id, 0), mapa_comp)
         for s in simulados
     ]
 
@@ -517,7 +552,8 @@ async def buscar_simulado(simulado_id: str, _=Depends(get_current_user)):
     total_inscritos = await db.inscricaoaluno.count(
         where={"simuladoId": simulado_id}
     )
-    return _serializar_simulado(simulado, total_inscritos)
+    mapa_comp = await _mapa_componentes([simulado])
+    return _serializar_simulado(simulado, total_inscritos, mapa_comp)
 
 
 @router.get("/{simulado_id}/relatorio", response_model=RelatorioEtapaResponse)
