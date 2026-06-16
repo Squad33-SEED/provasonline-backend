@@ -249,8 +249,6 @@ model Questao {
   criadoEm        DateTime             @default(now()) @map("criado_em")
   atualizadoEm    DateTime             @updatedAt @map("atualizado_em")
 
-  itensSimuladoLivre ItemSimuladoLivre[]
-
   @@map("questoes")
 }
 
@@ -508,7 +506,12 @@ model ItemSimuladoLivre {
   simuladoLivreId    String        @map("id_simulado_livre")
   simuladoLivre      SimuladoLivre @relation(fields: [simuladoLivreId], references: [id], onDelete: Cascade)
   questaoId          String        @map("id_questao")
-  questao            Questao       @relation(fields: [questaoId], references: [id])
+  enunciado          String?       @db.Text
+  urlImagem          String?       @map("url_imagem")
+  alternativas       Json?
+  respostaCorreta    String?       @map("resposta_correta") @db.Char(1)
+  assunto            String?
+  dificuldade        String?
   ordem              Int
   alternativaMarcada String?       @map("alternativa_marcada") @db.Char(1)
   respondidoEm       DateTime?     @map("respondido_em")

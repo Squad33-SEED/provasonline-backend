@@ -1,3 +1,4 @@
+import asyncio
 import random
 from datetime import datetime, timezone
 
@@ -6,6 +7,8 @@ from prisma import Json
 
 from src.database import db
 from src.dependencies import get_current_user
+from src.services import questions_api
+from src.services.sorteio_questoes import _pools_por_dificuldade, _subject_slugs
 from src.schemas import (
     AlternativaParaAluno,
     DisciplinaSimulado,
@@ -22,6 +25,8 @@ from src.schemas import (
 
 router = APIRouter(prefix="/simulado-livre", tags=["Simulado Livre"])
 
+DIFICULDADES = ["FACIL", "MEDIO", "DIFICIL"]
+
 
 def _require_aluno(usuario):
     if usuario.tipo != "ALUNO":
@@ -34,14 +39,6 @@ async def _buscar_aluno(usuario_id: str):
     if not aluno:
         raise HTTPException(status_code=404, detail="Aluno não encontrado")
     return aluno
-
-
-def _alternativas(questao) -> list[AlternativaParaAluno]:
-    raw = questao.alternativas if isinstance(questao.alternativas, list) else []
-    return [
-        AlternativaParaAluno(letra=a.get("letra", ""), texto=a.get("texto", ""))
-        for a in raw
-    ]
 
 
 def _titulo(nomes: list[str]) -> str:
@@ -57,7 +54,36 @@ async def _nomes_componentes(componente_ids: list[str]) -> list[str]:
     return [mapa[cid] for cid in componente_ids if cid in mapa]
 
 
-async def _criar_simulado(aluno_id: str, componente_ids: list[str], duracao: int, questoes: list):
+def _assunto(questao_api: dict) -> str:
+    topic = questao_api.get("topic") or {}
+    return topic.get("name") or ""
+
+
+def _alternativas_para_aluno(alternativas) -> list[AlternativaParaAluno]:
+    raw = alternativas if isinstance(alternativas, list) else []
+    return [
+        AlternativaParaAluno(letra=a.get("letra", ""), texto=a.get("texto", ""))
+        for a in raw
+    ]
+
+
+def _snapshot(questao_api: dict, dificuldade: str) -> dict:
+    """Monta o snapshot de uma questão vinda da API externa."""
+    alternativas, correta = questions_api.montar_alternativas(questao_api)
+    return {
+        "questaoId": questao_api.get("id"),
+        "enunciado": questao_api.get("title", ""),
+        "urlImagem": questao_api.get("imageUrl"),
+        "alternativas": alternativas,
+        "respostaCorreta": correta,
+        "assunto": _assunto(questao_api),
+        "dificuldade": dificuldade,
+    }
+
+
+async def _criar_simulado(
+    aluno_id: str, componente_ids: list[str], duracao: int, snapshots: list[dict]
+) -> SimuladoLivreResponse:
     nomes = await _nomes_componentes(componente_ids)
     simulado = await db.simuladolivre.create(
         data={
@@ -69,36 +95,38 @@ async def _criar_simulado(aluno_id: str, componente_ids: list[str], duracao: int
         }
     )
 
-    for ordem, questao in enumerate(questoes, start=1):
+    for ordem, snap in enumerate(snapshots, start=1):
         await db.itemsimuladolivre.create(
             data={
                 "simuladoLivre": {"connect": {"id": simulado.id}},
-                "questao": {"connect": {"id": questao.id}},
+                "questaoId": snap["questaoId"],
+                "enunciado": snap["enunciado"],
+                "urlImagem": snap.get("urlImagem"),
+                "alternativas": Json(snap["alternativas"]),
+                "respostaCorreta": snap["respostaCorreta"],
+                "assunto": snap.get("assunto") or "",
+                "dificuldade": snap.get("dificuldade") or "",
                 "ordem": ordem,
             }
         )
 
-    return _montar_response(simulado, questoes)
-
-
-def _montar_response(simulado, questoes_ordenadas) -> SimuladoLivreResponse:
     return SimuladoLivreResponse(
         id=simulado.id,
         titulo=simulado.titulo,
         duracaoMinutos=simulado.duracaoMinutos,
-        totalQuestoes=len(questoes_ordenadas),
+        totalQuestoes=len(snapshots),
         status=simulado.status,
         questoes=[
             QuestaoSimuladoLivre(
                 ordem=ordem,
-                questaoId=q.id,
-                enunciado=q.enunciado,
-                assunto=q.assunto.nome if q.assunto else "",
-                dificuldade=q.dificuldade,
-                alternativas=_alternativas(q),
+                questaoId=snap["questaoId"],
+                enunciado=snap["enunciado"],
+                assunto=snap.get("assunto") or "",
+                dificuldade=snap.get("dificuldade") or "",
+                alternativas=_alternativas_para_aluno(snap["alternativas"]),
                 respostaSalva=None,
             )
-            for ordem, q in enumerate(questoes_ordenadas, start=1)
+            for ordem, snap in enumerate(snapshots, start=1)
         ],
     )
 
@@ -108,38 +136,37 @@ async def listar_disciplinas(usuario=Depends(get_current_user)):
     _require_aluno(usuario)
 
     componentes = await db.componentecurricular.find_many(where={"ativo": True})
-    questoes = await db.questao.find_many(where={"ativa": True})
 
-    por_componente: dict[str, dict[str, int]] = {}
-    for q in questoes:
-        c = por_componente.setdefault(q.componenteId, {"FACIL": 0, "MEDIO": 0, "DIFICIL": 0})
-        if q.dificuldade in c:
-            c[q.dificuldade] += 1
-
-    agregado: dict[str, dict] = {}
+    # Agrupa por nome. Componentes de mesmo nome compartilham o mesmo slug da
+    # API, então a matéria é contada uma vez (não soma duplicado).
+    por_nome: dict[str, dict] = {}
     for comp in componentes:
-        dados = agregado.setdefault(
-            comp.nome,
-            {"componenteIds": [], "facil": 0, "medio": 0, "dificil": 0},
-        )
+        slug = getattr(comp, "questionsSubjectSlug", None)
+        if not slug:
+            continue
+        dados = por_nome.setdefault(comp.nome, {"componenteIds": [], "slug": slug})
         dados["componenteIds"].append(comp.id)
-        cont = por_componente.get(comp.id, {"FACIL": 0, "MEDIO": 0, "DIFICIL": 0})
-        dados["facil"] += cont["FACIL"]
-        dados["medio"] += cont["MEDIO"]
-        dados["dificil"] += cont["DIFICIL"]
 
-    disciplinas = [
-        DisciplinaSimulado(
-            nome=nome,
-            componenteIds=dados["componenteIds"],
-            totalQuestoes=dados["facil"] + dados["medio"] + dados["dificil"],
-            facil=dados["facil"],
-            medio=dados["medio"],
-            dificil=dados["dificil"],
+    disciplinas: list[DisciplinaSimulado] = []
+    for nome, info in por_nome.items():
+        facil, medio, dificil = await asyncio.gather(
+            questions_api.contar_questoes(info["slug"], "FACIL"),
+            questions_api.contar_questoes(info["slug"], "MEDIO"),
+            questions_api.contar_questoes(info["slug"], "DIFICIL"),
         )
-        for nome, dados in agregado.items()
-    ]
-    disciplinas = [d for d in disciplinas if d.totalQuestoes > 0]
+        total = facil + medio + dificil
+        if total > 0:
+            disciplinas.append(
+                DisciplinaSimulado(
+                    nome=nome,
+                    componenteIds=info["componenteIds"],
+                    totalQuestoes=total,
+                    facil=facil,
+                    medio=medio,
+                    dificil=dificil,
+                )
+            )
+
     disciplinas.sort(key=lambda d: d.nome)
     return disciplinas
 
@@ -153,27 +180,24 @@ async def listar_banco(
 ):
     _require_aluno(usuario)
     componente_ids = [c for c in componente_id.split(",") if c]
-    where: dict = {"componenteId": {"in": componente_ids}, "ativa": True}
-    if assunto_id:
-        where["assuntoId"] = assunto_id
-    if dificuldade in ("FACIL", "MEDIO", "DIFICIL"):
-        where["dificuldade"] = dificuldade
+    slugs = await _subject_slugs(componente_ids)
+    faceis, medias, dificeis = await _pools_por_dificuldade(slugs)
 
-    questoes = await db.questao.find_many(
-        where=where,
-        include={"assunto": True},
-        order={"criadoEm": "desc"},
-    )
-    return [
-        QuestaoBanco(
-            id=q.id,
-            enunciado=q.enunciado,
-            assunto=q.assunto.nome if q.assunto else "",
-            dificuldade=q.dificuldade,
-            componenteId=q.componenteId,
-        )
-        for q in questoes
-    ]
+    itens: list[QuestaoBanco] = []
+    for dif, pool in (("FACIL", faceis), ("MEDIO", medias), ("DIFICIL", dificeis)):
+        if dificuldade in ("FACIL", "MEDIO", "DIFICIL") and dif != dificuldade:
+            continue
+        for q in pool:
+            itens.append(
+                QuestaoBanco(
+                    id=q.get("id"),
+                    enunciado=q.get("title", ""),
+                    assunto=_assunto(q),
+                    dificuldade=dif,
+                    componenteId=componente_ids[0],
+                )
+            )
+    return itens
 
 
 @router.post("/sortear", response_model=SimuladoLivreResponse, status_code=201)
@@ -181,31 +205,26 @@ async def criar_por_sorteio(data: SimuladoLivrePorSorteio, usuario=Depends(get_c
     _require_aluno(usuario)
     aluno = await _buscar_aluno(usuario.id)
 
-    selecionadas = []
-    for dificuldade, qtd in (
-        ("FACIL", data.qtdFacil),
-        ("MEDIO", data.qtdMedio),
-        ("DIFICIL", data.qtdDificil),
+    slugs = await _subject_slugs(data.componenteIds)
+    faceis, medias, dificeis = await _pools_por_dificuldade(slugs)
+
+    snapshots: list[dict] = []
+    for dif, qtd, pool in (
+        ("FACIL", data.qtdFacil, faceis),
+        ("MEDIO", data.qtdMedio, medias),
+        ("DIFICIL", data.qtdDificil, dificeis),
     ):
         if qtd <= 0:
             continue
-        disponiveis = await db.questao.find_many(
-            where={
-                "componenteId": {"in": data.componenteIds},
-                "dificuldade": dificuldade,
-                "ativa": True,
-            },
-            include={"assunto": True},
-        )
-        if len(disponiveis) < qtd:
+        if len(pool) < qtd:
             raise HTTPException(
                 status_code=422,
-                detail=f"Banco insuficiente: pediu {qtd} questões {dificuldade.lower()}, há {len(disponiveis)}",
+                detail=f"Banco insuficiente: pediu {qtd} questões {dif.lower()}, há {len(pool)}",
             )
-        selecionadas.extend(random.sample(disponiveis, qtd))
+        snapshots.extend(_snapshot(q, dif) for q in random.sample(pool, qtd))
 
-    random.shuffle(selecionadas)
-    return await _criar_simulado(aluno.id, data.componenteIds, data.duracaoMinutos, selecionadas)
+    random.shuffle(snapshots)
+    return await _criar_simulado(aluno.id, data.componenteIds, data.duracaoMinutos, snapshots)
 
 
 @router.post("/selecionar", response_model=SimuladoLivreResponse, status_code=201)
@@ -213,16 +232,26 @@ async def criar_por_selecao(data: SimuladoLivrePorSelecao, usuario=Depends(get_c
     _require_aluno(usuario)
     aluno = await _buscar_aluno(usuario.id)
 
-    questoes = await db.questao.find_many(
-        where={"id": {"in": data.questaoIds}, "ativa": True},
-        include={"assunto": True},
-    )
-    if len(questoes) != len(set(data.questaoIds)):
-        raise HTTPException(status_code=422, detail="Uma ou mais questões não foram encontradas")
+    slugs = await _subject_slugs(data.componenteIds)
+    faceis, medias, dificeis = await _pools_por_dificuldade(slugs)
 
-    ordem_map = {qid: i for i, qid in enumerate(data.questaoIds)}
-    questoes.sort(key=lambda q: ordem_map.get(q.id, 0))
-    return await _criar_simulado(aluno.id, data.componenteIds, data.duracaoMinutos, questoes)
+    por_id: dict[str, tuple[dict, str]] = {}
+    for dif, pool in (("FACIL", faceis), ("MEDIO", medias), ("DIFICIL", dificeis)):
+        for q in pool:
+            qid = q.get("id")
+            if qid and qid not in por_id:
+                por_id[qid] = (q, dif)
+
+    ids_unicos = list(dict.fromkeys(data.questaoIds))
+    faltando = [qid for qid in ids_unicos if qid not in por_id]
+    if faltando:
+        raise HTTPException(
+            status_code=422,
+            detail="Uma ou mais questões não foram encontradas no banco da API",
+        )
+
+    snapshots = [_snapshot(*por_id[qid]) for qid in ids_unicos]
+    return await _criar_simulado(aluno.id, data.componenteIds, data.duracaoMinutos, snapshots)
 
 
 @router.get("/{simulado_id}", response_model=SimuladoLivreResponse)
@@ -232,7 +261,7 @@ async def buscar_simulado(simulado_id: str, usuario=Depends(get_current_user)):
 
     simulado = await db.simuladolivre.find_unique(
         where={"id": simulado_id},
-        include={"itens": {"include": {"questao": {"include": {"assunto": True}}}}},
+        include={"itens": True},
     )
     if not simulado:
         raise HTTPException(status_code=404, detail="Simulado não encontrado")
@@ -250,10 +279,10 @@ async def buscar_simulado(simulado_id: str, usuario=Depends(get_current_user)):
             QuestaoSimuladoLivre(
                 ordem=item.ordem,
                 questaoId=item.questaoId,
-                enunciado=item.questao.enunciado,
-                assunto=item.questao.assunto.nome if item.questao.assunto else "",
-                dificuldade=item.questao.dificuldade,
-                alternativas=_alternativas(item.questao),
+                enunciado=item.enunciado or "",
+                assunto=item.assunto or "",
+                dificuldade=item.dificuldade or "",
+                alternativas=_alternativas_para_aluno(item.alternativas),
                 respostaSalva=item.alternativaMarcada,
             )
             for item in itens
@@ -272,7 +301,7 @@ async def submeter_simulado(
 
     simulado = await db.simuladolivre.find_unique(
         where={"id": simulado_id},
-        include={"itens": {"include": {"questao": {"include": {"assunto": True}}}}},
+        include={"itens": True},
     )
     if not simulado:
         raise HTTPException(status_code=404, detail="Simulado não encontrado")
@@ -290,8 +319,8 @@ async def submeter_simulado(
 
     for item in itens:
         marcada = marcadas.get(item.questaoId)
-        correta_letra = item.questao.respostaCorreta.upper()
-        acertou = marcada == correta_letra
+        correta_letra = (item.respostaCorreta or "").upper()
+        acertou = marcada is not None and marcada == correta_letra
         if acertou:
             acertos += 1
 
@@ -309,9 +338,9 @@ async def submeter_simulado(
             GabaritoSimuladoLivreItem(
                 ordem=item.ordem,
                 questaoId=item.questaoId,
-                enunciado=item.questao.enunciado,
-                assunto=item.questao.assunto.nome if item.questao.assunto else "",
-                dificuldade=item.questao.dificuldade,
+                enunciado=item.enunciado or "",
+                assunto=item.assunto or "",
+                dificuldade=item.dificuldade or "",
                 alternativaMarcada=marcada,
                 alternativaCorreta=correta_letra,
                 correta=acertou,
