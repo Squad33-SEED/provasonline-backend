@@ -322,7 +322,7 @@ async def listar_certificados(usuario=Depends(get_current_user)):
     aluno = await _buscar_aluno_do_usuario(usuario.id)
 
     certificados = await db.certificado.find_many(
-        where={"alunoId": aluno.id},
+        where={"alunoId": aluno.id, "tipo": "CONCLUSAO"},
         include={"nivel": True},
         order={"emitidoEm": "desc"},
     )
