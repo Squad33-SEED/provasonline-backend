@@ -246,6 +246,7 @@ class SimuladoResponse(BaseModel):
     titulo: str
     descricao: str | None
     componente: ComponenteResumo
+    componentes: list[ComponenteResumo] = []
     qtdFacil: int
     qtdMedio: int
     qtdDificil: int
