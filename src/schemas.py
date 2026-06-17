@@ -787,3 +787,97 @@ class ProvaEmAndamentoResponse(BaseModel):
     simuladoId: str | None = None
     resultadoId: str | None = None
     expiraEm: str | None = None
+
+
+class ModalidadeCreate(BaseModel):
+    nivelId: str = Field(min_length=1)
+    nome: str = Field(min_length=1, max_length=50)
+    supletivo: bool = False
+
+
+class ModalidadeUpdate(BaseModel):
+    nome: str = Field(min_length=1, max_length=50)
+    supletivo: bool = False
+
+
+class ModalidadeResponse(BaseModel):
+    id: str
+    nivelId: str
+    nome: str
+    supletivo: bool
+    ativo: bool
+
+    class Config:
+        from_attributes = True
+
+
+class ComponenteCreate(BaseModel):
+    modalidadeId: str = Field(min_length=1)
+    nome: str = Field(min_length=1, max_length=100)
+    codigo: str = Field(min_length=1, max_length=20)
+    assuntos: list[str] = []
+
+
+class ComponenteUpdate(BaseModel):
+    nome: str = Field(min_length=1, max_length=100)
+    codigo: str = Field(min_length=1, max_length=20)
+
+
+class AssuntoCreate(BaseModel):
+    nome: str = Field(min_length=1)
+
+
+class AssuntoResponse(BaseModel):
+    id: str
+    componenteId: str
+    nome: str
+    ativo: bool
+
+    class Config:
+        from_attributes = True
+
+
+class AssuntoResponseSimples(BaseModel):
+    id: str
+    nome: str
+    ativo: bool
+
+    class Config:
+        from_attributes = True
+
+
+class NivelCreate(BaseModel):
+    nome: str = Field(min_length=1)
+    descricao: str | None = None
+    ordem: int = 0
+
+
+class NivelUpdate(BaseModel):
+    nome: str = Field(min_length=1)
+    descricao: str | None = None
+    ordem: int = 0
+
+
+class NivelResponse(BaseModel):
+    id: str
+    nome: str
+    descricao: str | None
+    ordem: int
+    ativo: bool
+
+    class Config:
+        from_attributes = True
+
+
+class ComponenteResponse(BaseModel):
+    id: str
+    modalidadeId: str
+    nome: str
+    codigo: str
+    ativo: bool
+    totalAssuntos: int = 0
+    totalQuestoes: int = 0
+    assuntos: list[AssuntoResponseSimples] = []
+
+    class Config:
+        from_attributes = True
