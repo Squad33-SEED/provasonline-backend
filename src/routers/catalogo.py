@@ -24,7 +24,13 @@ from src.schemas import (
 
 router = APIRouter(prefix="/catalogo", tags=["Catálogo"])
 
-MSG_DEPENDENTES = "Não é possível desativar: existem {} dependentes ativos usando este item."
+def _msg_bloqueio(partes: list[str]) -> str:
+    """Mensagem acionável: diz QUAIS dependentes impedem a desativação."""
+    return (
+        "Não é possível desativar: ainda há "
+        + " e ".join(partes)
+        + " em uso. Desative esses itens primeiro."
+    )
 
 @router.get("/niveis", response_model=list[NivelResumo])
 async def listar_niveis(_=Depends(get_current_user)):
@@ -159,7 +165,10 @@ async def toggle_nivel(nivel_id: str, _=Depends(require_admin)):
     if nivel.ativo:
         n_modal = await db.modalidade.count(where={"nivelId": nivel_id, "ativo": True})
         if n_modal > 0:
-            raise HTTPException(status_code=422, detail=MSG_DEPENDENTES.format(n_modal))
+            raise HTTPException(
+                status_code=422,
+                detail=_msg_bloqueio([f"{n_modal} modalidade(s) ativa(s) deste nível"]),
+            )
 
     atualizado = await db.nivelensino.update(
         where={"id": nivel_id},
@@ -227,9 +236,13 @@ async def toggle_modalidade(modalidade_id: str, _=Depends(require_admin)):
             where={"modalidadeId": modalidade_id, "ativo": True}
         )
         n_turmas = await db.turma.count(where={"modalidadeId": modalidade_id})
-        total = n_comp + n_turmas
-        if total > 0:
-            raise HTTPException(status_code=422, detail=MSG_DEPENDENTES.format(total))
+        partes = []
+        if n_comp > 0:
+            partes.append(f"{n_comp} componente(s) ativo(s)")
+        if n_turmas > 0:
+            partes.append(f"{n_turmas} turma(s)")
+        if partes:
+            raise HTTPException(status_code=422, detail=_msg_bloqueio(partes))
 
     atualizada = await db.modalidade.update(
         where={"id": modalidade_id},
@@ -266,10 +279,12 @@ async def criar_componente(data: ComponenteCreate, _=Depends(require_admin)):
     if not modalidade or not modalidade.ativo:
         raise HTTPException(status_code=422, detail="Modalidade não encontrada ou inativa")
 
+    slug = (data.questionsSubjectSlug or "").strip() or None
     componente = await db.componentecurricular.create(
         data={
             "nome": data.nome,
             "codigo": data.codigo,
+            "questionsSubjectSlug": slug,
             "modalidade": {"connect": {"id": data.modalidadeId}},
         }
     )
@@ -291,6 +306,7 @@ async def criar_componente(data: ComponenteCreate, _=Depends(require_admin)):
         nome=componente.nome,
         codigo=componente.codigo,
         ativo=componente.ativo,
+        questionsSubjectSlug=componente.questionsSubjectSlug,
         totalAssuntos=len(assuntos_criados),
         totalQuestoes=0,
         assuntos=assuntos_criados,
@@ -305,9 +321,10 @@ async def editar_componente(
     if not componente:
         raise HTTPException(status_code=404, detail="Componente não encontrado")
 
+    slug = (data.questionsSubjectSlug or "").strip() or None
     atualizado = await db.componentecurricular.update(
         where={"id": componente_id},
-        data={"nome": data.nome, "codigo": data.codigo},
+        data={"nome": data.nome, "codigo": data.codigo, "questionsSubjectSlug": slug},
     )
     return ComponenteResponse(
         id=atualizado.id,
@@ -315,6 +332,7 @@ async def editar_componente(
         nome=atualizado.nome,
         codigo=atualizado.codigo,
         ativo=atualizado.ativo,
+        questionsSubjectSlug=atualizado.questionsSubjectSlug,
     )
 
 
@@ -331,9 +349,13 @@ async def toggle_componente(componente_id: str, _=Depends(require_admin)):
         n_simulados = await db.simulado.count(
             where={"componenteId": componente_id, "status": "PUBLICADO"}
         )
-        total = n_questoes + n_simulados
-        if total > 0:
-            raise HTTPException(status_code=422, detail=MSG_DEPENDENTES.format(total))
+        partes = []
+        if n_questoes > 0:
+            partes.append(f"{n_questoes} questão(ões)")
+        if n_simulados > 0:
+            partes.append(f"{n_simulados} simulado(s) publicado(s)")
+        if partes:
+            raise HTTPException(status_code=422, detail=_msg_bloqueio(partes))
 
     atualizado = await db.componentecurricular.update(
         where={"id": componente_id},
@@ -347,6 +369,7 @@ async def toggle_componente(componente_id: str, _=Depends(require_admin)):
         nome=atualizado.nome,
         codigo=atualizado.codigo,
         ativo=atualizado.ativo,
+        questionsSubjectSlug=atualizado.questionsSubjectSlug,
         totalAssuntos=n_assuntos,
         totalQuestoes=n_questoes_total,
     )
@@ -398,6 +421,7 @@ async def listar_componentes_admin(_=Depends(require_admin)):
                 nome=c.nome,
                 codigo=c.codigo,
                 ativo=c.ativo,
+                questionsSubjectSlug=c.questionsSubjectSlug,
                 totalAssuntos=len(assuntos),
                 totalQuestoes=contagem.get(c.id, 0),
                 assuntos=[AssuntoResponseSimples(id=a.id, nome=a.nome, ativo=a.ativo) for a in assuntos],
@@ -417,7 +441,10 @@ async def toggle_assunto(assunto_id: str, _=Depends(require_admin)):
             where={"assuntoId": assunto_id, "ativa": True}
         )
         if n_questoes > 0:
-            raise HTTPException(status_code=422, detail=MSG_DEPENDENTES.format(n_questoes))
+            raise HTTPException(
+                status_code=422,
+                detail=_msg_bloqueio([f"{n_questoes} questão(ões)"]),
+            )
 
     atualizado = await db.assunto.update(
         where={"id": assunto_id},

@@ -133,6 +133,50 @@ async def test_crud_componente(client, admin_token):
 
 
 @pytest.mark.asyncio
+async def test_componente_persiste_questions_subject_slug(client, admin_token):
+    nivel_id = await _get_nivel(client, admin_token)
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    r = await client.post(
+        "/catalogo/modalidades",
+        json={"nivelId": nivel_id, "nome": "Modal Slug", "supletivo": False},
+        headers=headers,
+    )
+    modal_id = r.json()["id"]
+
+    r = await client.post(
+        "/catalogo/componentes",
+        json={
+            "modalidadeId": modal_id,
+            "nome": "Comp Slug",
+            "codigo": "CS001",
+            "questionsSubjectSlug": "matematica",
+        },
+        headers=headers,
+    )
+    assert r.status_code == 201
+    comp = r.json()
+    comp_id = comp["id"]
+    assert comp["questionsSubjectSlug"] == "matematica"
+
+    r = await client.get("/catalogo/componentes/admin", headers=headers)
+    achado = next(c for c in r.json() if c["id"] == comp_id)
+    assert achado["questionsSubjectSlug"] == "matematica"
+
+    r = await client.put(
+        f"/catalogo/componentes/{comp_id}",
+        json={
+            "nome": "Comp Slug",
+            "codigo": "CS001",
+            "questionsSubjectSlug": "portugues",
+        },
+        headers=headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["questionsSubjectSlug"] == "portugues"
+
+
+@pytest.mark.asyncio
 async def test_criar_componente_403(client, prof_token):
     r = await client.post(
         "/catalogo/componentes",
