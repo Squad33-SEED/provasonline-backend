@@ -29,10 +29,10 @@ MSG_DEPENDENTES = "Não é possível desativar: existem {} dependentes ativos us
 @router.get("/niveis", response_model=list[NivelResumo])
 async def listar_niveis(_=Depends(get_current_user)):
     niveis = await db.nivelensino.find_many(
-        order={"nome": "asc"},
+        where={"ativo": True},
+        order=[{"ordem": "asc"}, {"nome": "asc"}],
     )
-    niveis_ordenados = sorted(niveis, key=lambda n: (not n.ativo, n.nome))
-    return [NivelResumo(id=n.id, nome=n.nome, ordem=0, ativo=n.ativo) for n in niveis_ordenados]
+    return [NivelResumo(id=n.id, nome=n.nome, ordem=n.ordem) for n in niveis]
 
 
 @router.get("/escolas", response_model=list[EscolaResumo])
@@ -97,6 +97,41 @@ async def listar_assuntos(componente_id: str, _=Depends(get_current_user)):
     )
     return [AssuntoResumo(id=a.id, nome=a.nome) for a in assuntos]
 
+@router.post("/niveis", response_model=NivelResponse, status_code=201)
+async def criar_nivel(data: NivelCreate, _=Depends(require_admin)):
+    nivel = await db.nivelensino.create(
+        data={
+            "nome": data.nome,
+            "descricao": data.descricao,
+            "ordem": data.ordem,
+        }
+    )
+    return NivelResponse(
+        id=nivel.id,
+        nome=nivel.nome,
+        descricao=nivel.descricao,
+        ordem=nivel.ordem,
+        ativo=nivel.ativo,
+    )
+
+
+@router.get("/niveis/admin", response_model=list[NivelResponse])
+async def listar_niveis_admin(_=Depends(require_admin)):
+    niveis = await db.nivelensino.find_many(
+        order=[{"ativo": "desc"}, {"ordem": "asc"}, {"nome": "asc"}],
+    )
+    return [
+        NivelResponse(
+            id=n.id,
+            nome=n.nome,
+            descricao=n.descricao,
+            ordem=n.ordem,
+            ativo=n.ativo,
+        )
+        for n in niveis
+    ]
+
+
 @router.put("/niveis/{nivel_id}", response_model=NivelResponse)
 async def editar_nivel(nivel_id: str, data: NivelUpdate, _=Depends(require_admin)):
     nivel = await db.nivelensino.find_unique(where={"id": nivel_id})
@@ -110,7 +145,7 @@ async def editar_nivel(nivel_id: str, data: NivelUpdate, _=Depends(require_admin
         id=atualizado.id,
         nome=atualizado.nome,
         descricao=atualizado.descricao,
-        ordem=0,
+        ordem=atualizado.ordem,
         ativo=atualizado.ativo,
     )
 
@@ -134,7 +169,7 @@ async def toggle_nivel(nivel_id: str, _=Depends(require_admin)):
         id=atualizado.id,
         nome=atualizado.nome,
         descricao=atualizado.descricao,
-        ordem=0,
+        ordem=atualizado.ordem,
         ativo=atualizado.ativo,
     )
 

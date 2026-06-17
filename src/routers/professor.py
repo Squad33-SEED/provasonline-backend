@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from src.database import db
 from src.dependencies import require_professor
+from src.services import questions_api
 from src.schemas import (
     ProfessorQuestaoItem,
     ProfessorResultadoEtapa,
@@ -59,27 +60,32 @@ async def listar_turmas(usuario=Depends(require_professor)):
 
 
 @router.get("/questoes", response_model=list[ProfessorQuestaoItem])
-async def listar_questoes(usuario=Depends(require_professor)):
-    professor = await _professor_do_usuario(usuario.id)
+async def listar_questoes(
+    componenteId: str = Query(..., min_length=1),
+    _=Depends(require_professor),
+):
+    componente = await db.componentecurricular.find_unique(where={"id": componenteId})
+    if not componente or not componente.questionsSubjectSlug:
+        raise HTTPException(
+            status_code=422,
+            detail="Componente não está vinculado a uma matéria da API de questões",
+        )
 
-    questoes = await db.questao.find_many(
-        where={"professorId": professor.id},
-        include={"componente": True, "assunto": True},
-        order={"criadoEm": "desc"},
-    )
-
+    slug = componente.questionsSubjectSlug
     resultado: list[ProfessorQuestaoItem] = []
-    for q in questoes:
-        alternativas = q.alternativas if isinstance(q.alternativas, list) else []
-        resultado.append(ProfessorQuestaoItem(
-            id=q.id,
-            enunciado=q.enunciado,
-            componente=q.componente.nome if q.componente else "—",
-            assunto=q.assunto.nome if q.assunto else "—",
-            dificuldade=q.dificuldade,
-            ativa=q.ativa,
-            totalAlternativas=len(alternativas),
-        ))
+    for dif in ("FACIL", "MEDIO", "DIFICIL"):
+        for q in await questions_api.listar_questoes(slug, dif):
+            topico = q.get("topic") or {}
+            incorretas = q.get("incorrectAnswers") or []
+            resultado.append(ProfessorQuestaoItem(
+                id=q.get("id"),
+                enunciado=q.get("title", ""),
+                componente=componente.nome,
+                assunto=topico.get("name", "—"),
+                dificuldade=dif,
+                ativa=True,
+                totalAlternativas=len(incorretas) + 1,
+            ))
     return resultado
 
 
