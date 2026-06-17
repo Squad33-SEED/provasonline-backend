@@ -568,10 +568,15 @@ async def relatorio_etapa(simulado_id: str, _=Depends(require_admin)):
     media = round(sum(notas) / len(notas), 1) if notas else None
     percentual = round(media * 10, 1) if media is not None else None
 
+    total_inscritos = await db.inscricaoaluno.count(
+        where={"simuladoId": simulado_id}
+    )
+
     return RelatorioEtapaResponse(
         simuladoId=simulado.id,
         titulo=simulado.titulo,
         componente=simulado.componente.nome if simulado.componente else "—",
+        inscritos=total_inscritos,
         totalAlunos=len(resultados),
         finalizados=finalizados,
         mediaNota=media,
