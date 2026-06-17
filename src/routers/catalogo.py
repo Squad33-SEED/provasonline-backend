@@ -24,7 +24,13 @@ from src.schemas import (
 
 router = APIRouter(prefix="/catalogo", tags=["Catálogo"])
 
-MSG_DEPENDENTES = "Não é possível desativar: existem {} dependentes ativos usando este item."
+def _msg_bloqueio(partes: list[str]) -> str:
+    """Mensagem acionável: diz QUAIS dependentes impedem a desativação."""
+    return (
+        "Não é possível desativar: ainda há "
+        + " e ".join(partes)
+        + " em uso. Desative esses itens primeiro."
+    )
 
 @router.get("/niveis", response_model=list[NivelResumo])
 async def listar_niveis(_=Depends(get_current_user)):
@@ -159,7 +165,10 @@ async def toggle_nivel(nivel_id: str, _=Depends(require_admin)):
     if nivel.ativo:
         n_modal = await db.modalidade.count(where={"nivelId": nivel_id, "ativo": True})
         if n_modal > 0:
-            raise HTTPException(status_code=422, detail=MSG_DEPENDENTES.format(n_modal))
+            raise HTTPException(
+                status_code=422,
+                detail=_msg_bloqueio([f"{n_modal} modalidade(s) ativa(s) deste nível"]),
+            )
 
     atualizado = await db.nivelensino.update(
         where={"id": nivel_id},
@@ -227,9 +236,13 @@ async def toggle_modalidade(modalidade_id: str, _=Depends(require_admin)):
             where={"modalidadeId": modalidade_id, "ativo": True}
         )
         n_turmas = await db.turma.count(where={"modalidadeId": modalidade_id})
-        total = n_comp + n_turmas
-        if total > 0:
-            raise HTTPException(status_code=422, detail=MSG_DEPENDENTES.format(total))
+        partes = []
+        if n_comp > 0:
+            partes.append(f"{n_comp} componente(s) ativo(s)")
+        if n_turmas > 0:
+            partes.append(f"{n_turmas} turma(s)")
+        if partes:
+            raise HTTPException(status_code=422, detail=_msg_bloqueio(partes))
 
     atualizada = await db.modalidade.update(
         where={"id": modalidade_id},
@@ -336,9 +349,13 @@ async def toggle_componente(componente_id: str, _=Depends(require_admin)):
         n_simulados = await db.simulado.count(
             where={"componenteId": componente_id, "status": "PUBLICADO"}
         )
-        total = n_questoes + n_simulados
-        if total > 0:
-            raise HTTPException(status_code=422, detail=MSG_DEPENDENTES.format(total))
+        partes = []
+        if n_questoes > 0:
+            partes.append(f"{n_questoes} questão(ões)")
+        if n_simulados > 0:
+            partes.append(f"{n_simulados} simulado(s) publicado(s)")
+        if partes:
+            raise HTTPException(status_code=422, detail=_msg_bloqueio(partes))
 
     atualizado = await db.componentecurricular.update(
         where={"id": componente_id},
@@ -424,7 +441,10 @@ async def toggle_assunto(assunto_id: str, _=Depends(require_admin)):
             where={"assuntoId": assunto_id, "ativa": True}
         )
         if n_questoes > 0:
-            raise HTTPException(status_code=422, detail=MSG_DEPENDENTES.format(n_questoes))
+            raise HTTPException(
+                status_code=422,
+                detail=_msg_bloqueio([f"{n_questoes} questão(ões)"]),
+            )
 
     atualizado = await db.assunto.update(
         where={"id": assunto_id},
