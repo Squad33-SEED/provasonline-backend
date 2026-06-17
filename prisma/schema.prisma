@@ -79,6 +79,16 @@ enum StatusImportacao {
   FALHA
 }
 
+enum TipoCandidato {
+  REGULAR
+  EXTERNO
+}
+
+enum TipoCertificado {
+  CONCLUSAO
+  PROFICIENCIA_PARCIAL
+}
+
 model Usuario {
   id              String      @id @default(uuid()) @map("id_usuario")
   nome            String      @db.VarChar(200)
@@ -90,6 +100,11 @@ model Usuario {
   ativo           Boolean     @default(true)
   criadoEm        DateTime    @default(now()) @map("criado_em")
   atualizadoEm    DateTime    @updatedAt @map("atualizado_em")
+  tipoCandidato       TipoCandidato @default(REGULAR) @map("tipo_candidato")
+  prereqValidado      Boolean       @default(false) @map("prereq_validado")
+  prereqDocumento     String?       @map("prereq_documento")
+  prereqValidadoPorId String?       @map("prereq_validado_por")
+  prereqValidadoEm    DateTime?     @map("prereq_validado_em")
 
   aluno                 Aluno?
   professor             Professor?
@@ -127,6 +142,8 @@ model Aluno {
   resultados      ResultadoAluno[]
   simuladosLivres SimuladoLivre[]
   inscricoes      InscricaoAluno[]
+  aproveitamentos AproveitamentoCandidato[]
+  certificados    Certificado[]
 
   @@map("alunos")
 }
@@ -150,11 +167,16 @@ model NivelEnsino {
   id           String   @id @default(uuid()) @map("id_nivel")
   nome         String
   descricao    String?  @db.Text
+  ordem        Int      @default(0)
   ativo        Boolean  @default(true)
   criadoEm     DateTime @default(now()) @map("criado_em")
   atualizadoEm DateTime @updatedAt @map("atualizado_em")
 
-  modalidades Modalidade[]
+  modalidades      Modalidade[]
+  componentesNivel NivelComponente[]
+  simulados        Simulado[]
+  aproveitamentos  AproveitamentoCandidato[]
+  certificados     Certificado[]
 
   @@map("niveis_ensino")
 }
@@ -182,12 +204,15 @@ model ComponenteCurricular {
   nome         String     @db.VarChar(100)
   codigo       String     @db.VarChar(20)
   ativo        Boolean    @default(true)
+  questionsSubjectSlug String? @map("questions_subject_slug")
   criadoEm     DateTime   @default(now()) @map("criado_em")
   atualizadoEm DateTime   @updatedAt @map("atualizado_em")
 
   assuntos  Assunto[]
   questoes  Questao[]
   simulados Simulado[]
+  niveisComponente NivelComponente[]
+  aproveitamentos  AproveitamentoCandidato[]
 
   @@map("componentes_curriculares")
 }
@@ -223,9 +248,6 @@ model Questao {
   ativa           Boolean              @default(true)
   criadoEm        DateTime             @default(now()) @map("criado_em")
   atualizadoEm    DateTime             @updatedAt @map("atualizado_em")
-
-  tentativas         TentativaQuestao[]
-  itensSimuladoLivre ItemSimuladoLivre[]
 
   @@map("questoes")
 }
@@ -290,6 +312,7 @@ model Simulado {
   professor            Professor            @relation(fields: [professorId], references: [id])
   componenteId         String               @map("id_componente")
   componente           ComponenteCurricular @relation(fields: [componenteId], references: [id])
+  componenteIds        Json?                @map("componente_ids")
   faixaId              String?              @map("id_faixa")
   faixa                FaixaSerie?          @relation(fields: [faixaId], references: [id])
   titulo               String               @db.VarChar(200)
@@ -305,6 +328,10 @@ model Simulado {
   janelaFim            DateTime             @map("janela_fim")
   embaralharAlternativas Boolean            @default(false) @map("embaralhar_alternativas")
   questoesSelecionadas Json?                @map("questoes_selecionadas")
+  geraCertificado      Boolean              @default(false) @map("gera_certificado")
+  nivelEnsinoId        String?              @map("id_nivel")
+  nivelEnsino          NivelEnsino?         @relation(fields: [nivelEnsinoId], references: [id])
+  notaMinimaCertificacao Float?             @map("nota_minima_certificacao")
   criadoEm             DateTime             @default(now()) @map("criado_em")
   atualizadoEm         DateTime             @updatedAt @map("atualizado_em")
 
@@ -346,6 +373,7 @@ model ResultadoAluno {
 
   tentativasQuestoes TentativaQuestao[]
   violacoes          ViolacaoProva[]
+  aproveitamentos    AproveitamentoCandidato[]
 
   @@map("resultados_alunos")
 }
@@ -365,7 +393,10 @@ model TentativaQuestao {
   resultadoId              String         @map("id_resultado")
   resultado                ResultadoAluno @relation(fields: [resultadoId], references: [id], onDelete: Cascade)
   questaoId                String         @map("id_questao")
-  questao                  Questao        @relation(fields: [questaoId], references: [id])
+  enunciado                String         @db.Text
+  urlImagem                String?        @map("url_imagem")
+  alternativas             Json
+  respostaCorreta          String         @map("resposta_correta") @db.Char(1)
   ordem                    Int
   alternativaMarcada       String?        @map("alternativa_marcada") @db.Char(1)
   alternativasEmbaralhadas Json?          @map("alternativas_embaralhadas")
@@ -475,11 +506,73 @@ model ItemSimuladoLivre {
   simuladoLivreId    String        @map("id_simulado_livre")
   simuladoLivre      SimuladoLivre @relation(fields: [simuladoLivreId], references: [id], onDelete: Cascade)
   questaoId          String        @map("id_questao")
-  questao            Questao       @relation(fields: [questaoId], references: [id])
+  enunciado          String?       @db.Text
+  urlImagem          String?       @map("url_imagem")
+  alternativas       Json?
+  respostaCorreta    String?       @map("resposta_correta") @db.Char(1)
+  assunto            String?
+  dificuldade        String?
   ordem              Int
   alternativaMarcada String?       @map("alternativa_marcada") @db.Char(1)
   respondidoEm       DateTime?     @map("respondido_em")
 
   @@id([simuladoLivreId, questaoId])
   @@map("itens_simulado_livre")
+}
+
+model NivelComponente {
+  nivelId      String               @map("id_nivel")
+  nivel        NivelEnsino          @relation(fields: [nivelId], references: [id])
+  componenteId String               @map("id_componente")
+  componente   ComponenteCurricular @relation(fields: [componenteId], references: [id])
+  obrigatorio  Boolean              @default(true)
+
+  @@id([nivelId, componenteId])
+  @@map("niveis_componentes")
+}
+
+model AproveitamentoCandidato {
+  id            String               @id @default(uuid()) @map("id_aproveitamento")
+  alunoId       String               @map("id_aluno")
+  aluno         Aluno                @relation(fields: [alunoId], references: [id])
+  componenteId  String               @map("id_componente")
+  componente    ComponenteCurricular @relation(fields: [componenteId], references: [id])
+  nivelId       String               @map("id_nivel")
+  nivel         NivelEnsino          @relation(fields: [nivelId], references: [id])
+  anoReferencia Int                  @map("ano_referencia")
+  aprovado      Boolean              @default(true)
+  notaObtida    Float                @map("nota_obtida")
+  tentativaId   String               @map("id_resultado")
+  tentativa     ResultadoAluno       @relation(fields: [tentativaId], references: [id])
+  criadoEm      DateTime             @default(now()) @map("criado_em")
+
+  @@unique([alunoId, componenteId, nivelId, anoReferencia])
+  @@map("aproveitamentos_candidato")
+}
+
+model Certificado {
+  id                   String          @id @default(uuid()) @map("id_certificado")
+  alunoId              String          @map("id_aluno")
+  aluno                Aluno           @relation(fields: [alunoId], references: [id])
+  nivelId              String          @map("id_nivel")
+  nivel                NivelEnsino     @relation(fields: [nivelId], references: [id])
+  anoReferencia        Int             @map("ano_referencia")
+  tipo                 TipoCertificado @default(CONCLUSAO)
+  codigoVerificacao    String          @unique @map("codigo_verificacao")
+  assinaturaHash       String          @map("assinatura_hash")
+  componentesAprovados Json            @map("componentes_aprovados")
+  emitidoEm            DateTime        @default(now()) @map("emitido_em")
+
+  @@unique([alunoId, nivelId, anoReferencia, tipo])
+  @@map("certificados")
+}
+model IpAutorizado {
+  id           String   @id @default(uuid()) @map("id_ip_autorizado")
+  ip           String   @db.VarChar(45)
+  descricao    String?
+  ativo        Boolean  @default(true)
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  @@map("ips_autorizados")
 }

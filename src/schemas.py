@@ -147,12 +147,22 @@ class AlunoCreate(BaseModel):
     dataNascimento: date
     necessidadeEspecial: bool = False
     turmaId: str | None = None
+    tipoCandidato: str = "REGULAR"
+    prereqValidado: bool = False
+    prereqDocumento: str | None = None
 
     @field_validator("dataNascimento")
     @classmethod
     def validar_data_nao_futura(cls, v: date) -> date:
         if v > date.today():
             raise ValueError("Data de nascimento não pode estar no futuro")
+        return v
+
+    @field_validator("tipoCandidato")
+    @classmethod
+    def validar_tipo_candidato(cls, v: str) -> str:
+        if v not in ("REGULAR", "EXTERNO"):
+            raise ValueError("tipoCandidato deve ser REGULAR ou EXTERNO")
         return v
 
 
@@ -181,7 +191,8 @@ class AlunoListItem(BaseModel):
 class SimuladoCreate(BaseModel):
     titulo: str = Field(min_length=3, max_length=200)
     descricao: str | None = Field(default=None, max_length=2000)
-    componenteId: str = Field(min_length=1)
+    componenteId: str | None = Field(default=None, min_length=1)
+    componenteIds: list[str] = Field(default_factory=list)
     qtdFacil: int = Field(ge=0, le=100)
     qtdMedio: int = Field(ge=0, le=100)
     qtdDificil: int = Field(ge=0, le=100)
@@ -192,9 +203,21 @@ class SimuladoCreate(BaseModel):
     turmaIds: list[str] = []
     questaoIds: list[str] = []
     embaralharAlternativas: bool = False
+    geraCertificado: bool = False
+    nivelEnsinoId: str | None = None
+    notaMinimaCertificacao: float | None = None
 
     @model_validator(mode="after")
     def validar_regras_compostas(self):
+        if not self.componenteIds:
+            if self.componenteId:
+                self.componenteIds = [self.componenteId]
+            else:
+                raise ValueError("Selecione ao menos um componente curricular")
+
+        self.componenteIds = list(dict.fromkeys(self.componenteIds))
+        self.componenteId = self.componenteIds[0]
+
         modo_manual = len(self.questaoIds) > 0
         if not modo_manual and self.qtdFacil + self.qtdMedio + self.qtdDificil < 1:
             raise ValueError("Total de questões deve ser pelo menos 1")
@@ -203,6 +226,11 @@ class SimuladoCreate(BaseModel):
         agora = datetime.now(self.janelaInicio.tzinfo)
         if self.janelaInicio <= agora:
             raise ValueError("Início da janela deve estar no futuro")
+        if self.geraCertificado:
+            if not self.nivelEnsinoId:
+                raise ValueError("Etapa certificadora exige nivelEnsinoId")
+            if self.notaMinimaCertificacao is None:
+                self.notaMinimaCertificacao = 6.0
         return self
 
 
@@ -218,11 +246,14 @@ class SimuladoResponse(BaseModel):
     titulo: str
     descricao: str | None
     componente: ComponenteResumo
+    componentes: list[ComponenteResumo] = []
     qtdFacil: int
     qtdMedio: int
     qtdDificil: int
     totalQuestoes: int
     vagas: int
+    totalInscritos: int = 0
+    vagasDisponiveis: int = 0
     duracaoMinutos: int
     janelaInicio: datetime
     janelaFim: datetime
@@ -230,6 +261,9 @@ class SimuladoResponse(BaseModel):
     criadoEm: datetime
     turmas: list[TurmaResumoSimples] = []
     embaralharAlternativas: bool = False
+    geraCertificado: bool = False
+    nivelEnsinoId: str | None = None
+    notaMinimaCertificacao: float | None = None
 
 
 class DisponibilidadeQuestoes(BaseModel):
@@ -332,11 +366,14 @@ class EtapaDisponivelResponse(BaseModel):
     duracaoMinutos: int
     totalQuestoes: int
     vagas: int | None = None
+    vagasTotais: int = 0
+    vagasDisponiveis: int = 0
     janelaInicio: datetime
     janelaFim: datetime
     ativa: bool
     jaIniciada: bool
     inscrito: bool = False
+    geraCertificado: bool = False
     statusResultado: str | None = None
     resultadoId: str | None = None
 
@@ -441,24 +478,6 @@ class ProfessorQuestaoItem(BaseModel):
     assunto: str
     dificuldade: str
     ativa: bool
-
-
-class DashboardEmExecucaoItem(BaseModel):
-    id: str
-    titulo: str
-    componente: str
-    turmaEscola: str
-    janelaInicio: datetime
-    janelaFim: datetime
-    iniciados: int
-    finalizados: int
-
-
-class DashboardResponse(BaseModel):
-    etapasAtivas: int
-    etapasFinalizadas: int
-    emExecucao: list[DashboardEmExecucaoItem]
-    totalAlternativas: int
 
 
 class ProfessorResultadoEtapa(BaseModel):
@@ -611,10 +630,163 @@ class DashboardEmExecucaoItem(BaseModel):
     finalizados: int
 
 
+class DesempenhoEscolaItem(BaseModel):
+    escola: str
+    media: float
+    alunos: int
+
+
 class DashboardResponse(BaseModel):
     etapasAtivas: int
     etapasFinalizadas: int
     emExecucao: list[DashboardEmExecucaoItem]
+    desempenhoPorEscola: list[DesempenhoEscolaItem] = []
+
+
+class QuestaoAlternativaInput(BaseModel):
+    letra: str = Field(pattern=r"^[A-E]$")
+    texto: str = Field(min_length=1)
+
+
+class QuestaoAlternativa(BaseModel):
+    letra: str
+    texto: str
+
+
+class QuestaoCreate(BaseModel):
+    componenteId: str = Field(min_length=1)
+    assuntoId: str = Field(min_length=1)
+    tipo: str = "MULTIPLA_ESCOLHA"
+    dificuldade: DificuldadeQuestao
+    enunciado: str = Field(min_length=1)
+    alternativas: list[QuestaoAlternativaInput]
+    respostaCorreta: str = Field(pattern=r"^[A-E]$")
+    urlImagem: str | None = None
+
+    @field_validator("alternativas")
+    @classmethod
+    def validar_quantidade_alternativas(cls, v):
+        if len(v) < 2:
+            raise ValueError("Mínimo de 2 alternativas obrigatórias")
+        if len(v) > 5:
+            raise ValueError("Máximo de 5 alternativas permitidas")
+        letras = [a.letra for a in v]
+        if len(set(letras)) != len(letras):
+            raise ValueError("Letras das alternativas não podem repetir")
+        return v
+
+    @model_validator(mode="after")
+    def validar_resposta_correta(self):
+        letras = {a.letra for a in self.alternativas}
+        if self.respostaCorreta not in letras:
+            raise ValueError("Resposta correta deve ser uma das letras das alternativas")
+        return self
+
+
+class QuestaoUpdate(QuestaoCreate):
+    pass
+
+
+class QuestaoResponse(BaseModel):
+    id: str
+    enunciado: str
+    componenteId: str
+    componente: str
+    assuntoId: str
+    assunto: str
+    tipo: str
+    dificuldade: str
+    alternativas: list[QuestaoAlternativa]
+    respostaCorreta: str
+    urlImagem: str | None = None
+    ativa: bool
+    criadoEm: datetime
+
+
+class QuestaoListItem(BaseModel):
+    id: str
+    enunciado: str
+    componente: str
+    assunto: str
+    tipo: str
+    dificuldade: str
+    ativa: bool
+    totalAlternativas: int
+    professorNome: str
+
+
+class NivelResumo(BaseModel):
+    id: str
+    nome: str
+    ordem: int
+
+
+class ComponenteAprovadoItem(BaseModel):
+    componente: str
+    nota: float
+
+
+class CertificadoItem(BaseModel):
+    id: str
+    tipo: str
+    nivel: str
+    anoReferencia: int
+    codigoVerificacao: str
+    emitidoEm: datetime
+    componentesAprovados: list[ComponenteAprovadoItem]
+
+
+class VerificacaoCertificado(BaseModel):
+    status: str
+    nome: str | None = None
+    nivel: str | None = None
+    tipo: str | None = None
+    anoReferencia: int | None = None
+    emitidoEm: datetime | None = None
+    cpf: str | None = None
+    componentesAprovados: list[ComponenteAprovadoItem] = []
+
+
+class ComponenteProgresso(BaseModel):
+    componente: str
+    aprovado: bool
+    nota: float | None = None
+
+
+class AproveitamentoNivel(BaseModel):
+    nivel: str
+    anoReferencia: int
+    totalComponentes: int
+    aprovados: int
+    componentes: list[ComponenteProgresso]
+
+class IpCreate(BaseModel):
+    ip: str = Field(min_length=1, max_length=45)
+    descricao: str | None = None
+
+
+class IpUpdate(BaseModel):
+    ip: str | None = Field(default=None, min_length=1, max_length=45)
+    descricao: str | None = None
+    ativo: bool | None = None
+
+
+class IpResponse(BaseModel):
+    id: str
+    ip: str
+    descricao: str | None = None
+    ativo: bool
+    criadoEm: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProvaEmAndamentoResponse(BaseModel):
+    emAndamento: bool
+    simuladoId: str | None = None
+    resultadoId: str | None = None
+    expiraEm: str | None = None
 
 
 class ModalidadeCreate(BaseModel):
@@ -622,9 +794,11 @@ class ModalidadeCreate(BaseModel):
     nome: str = Field(min_length=1, max_length=50)
     supletivo: bool = False
 
+
 class ModalidadeUpdate(BaseModel):
     nome: str = Field(min_length=1, max_length=50)
     supletivo: bool = False
+
 
 class ModalidadeResponse(BaseModel):
     id: str
@@ -643,29 +817,28 @@ class ComponenteCreate(BaseModel):
     codigo: str = Field(min_length=1, max_length=20)
     assuntos: list[str] = []
 
+
 class ComponenteUpdate(BaseModel):
     nome: str = Field(min_length=1, max_length=100)
     codigo: str = Field(min_length=1, max_length=20)
-
-class ComponenteResponse(BaseModel):
-    id: str
-    modalidadeId: str
-    nome: str
-    codigo: str
-    ativo: bool
-    totalAssuntos: int = 0
-    totalQuestoes: int = 0
-
-    class Config:
-        from_attributes = True
 
 
 class AssuntoCreate(BaseModel):
     nome: str = Field(min_length=1)
 
+
 class AssuntoResponse(BaseModel):
     id: str
     componenteId: str
+    nome: str
+    ativo: bool
+
+    class Config:
+        from_attributes = True
+
+
+class AssuntoResponseSimples(BaseModel):
+    id: str
     nome: str
     ativo: bool
 
@@ -678,33 +851,18 @@ class NivelCreate(BaseModel):
     descricao: str | None = None
     ordem: int = 0
 
+
 class NivelUpdate(BaseModel):
     nome: str = Field(min_length=1)
     descricao: str | None = None
     ordem: int = 0
+
 
 class NivelResponse(BaseModel):
     id: str
     nome: str
     descricao: str | None
     ordem: int
-    ativo: bool
-
-    class Config:
-        from_attributes = True
-
-class NivelResumo(BaseModel):
-    id: str
-    nome: str
-    ordem: int
-    ativo: bool
-
-    class Config:
-        from_attributes = True
-
-class AssuntoResponseSimples(BaseModel):
-    id: str
-    nome: str
     ativo: bool
 
     class Config:

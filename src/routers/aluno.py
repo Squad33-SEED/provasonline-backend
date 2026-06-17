@@ -5,9 +5,14 @@ from prisma import Json
 
 from src.database import db
 from src.dependencies import get_current_user
+from src.services.certificacao import processar_certificacao
 from src.schemas import (
+    AproveitamentoNivel,
     AutoSaveRequest,
     AutoSaveResponse,
+    CertificadoItem,
+    ComponenteAprovadoItem,
+    ComponenteProgresso,
     EtapaDisponivelResponse,
     GabaritoItemDetalhado,
     HistoricoItem,
@@ -32,8 +37,8 @@ ROTULOS_VIOLACAO = {
 }
 from src.services.sorteio_questoes import (
     embaralhar_alternativas_questao,
-    montar_questoes_selecionadas,
-    sortear_questoes_para_prova,
+    montar_questoes_selecionadas_multi,
+    sortear_questoes_para_prova_multi,
 )
 
 router = APIRouter(prefix="/aluno", tags=["Aluno"])
@@ -81,10 +86,10 @@ def _resolver_resposta_original(alternativas_embaralhadas: list | None, resposta
 def _montar_gabarito(tentativas_questoes: list) -> list[GabaritoItemDetalhado]:
     gabarito: list[GabaritoItemDetalhado] = []
     for tq in sorted(tentativas_questoes, key=lambda x: x.ordem):
-        alternativas_base = tq.questao.alternativas if isinstance(tq.questao.alternativas, list) else []
+        alternativas_base = tq.alternativas if isinstance(tq.alternativas, list) else []
         alternativas_embaralhadas = tq.alternativasEmbaralhadas if isinstance(getattr(tq, "alternativasEmbaralhadas", None), list) else None
 
-        resposta_correta_original = tq.questao.respostaCorreta.upper()
+        resposta_correta_original = tq.respostaCorreta.upper()
         resposta_aluno_exibida = tq.alternativaMarcada.upper() if tq.alternativaMarcada else None
         resposta_aluno_original = _resolver_resposta_original(alternativas_embaralhadas, resposta_aluno_exibida)
 
@@ -99,7 +104,7 @@ def _montar_gabarito(tentativas_questoes: list) -> list[GabaritoItemDetalhado]:
         gabarito.append(GabaritoItemDetalhado(
             ordem=tq.ordem,
             questaoId=tq.questaoId,
-            enunciado=tq.questao.enunciado,
+            enunciado=tq.enunciado,
             alternativaMarcada=texto_marcada,
             alternativaCorreta=texto_correta or resposta_correta_original,
             correta=correta,
@@ -117,7 +122,7 @@ def _contar_acertos(tentativas_questoes: list) -> int:
             alternativas_embaralhadas if isinstance(alternativas_embaralhadas, list) else None,
             tq.alternativaMarcada.upper(),
         )
-        if resposta_original and resposta_original.upper() == tq.questao.respostaCorreta.upper():
+        if resposta_original and resposta_original.upper() == tq.respostaCorreta.upper():
             total += 1
     return total
 
@@ -244,9 +249,12 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
         order={"janelaInicio": "asc"},
     )
 
+    tipo_candidato = getattr(usuario, "tipoCandidato", "REGULAR")
+
     simulados_visiveis = [
         s for s in simulados
-        if not s.aplicacoes or any(a.turmaId in aluno_turma_ids for a in s.aplicacoes)
+        if (not s.aplicacoes or any(a.turmaId in aluno_turma_ids for a in s.aplicacoes))
+        and (tipo_candidato != "EXTERNO" or getattr(s, "geraCertificado", False))
     ]
 
     resultado_map: dict = {}
@@ -261,6 +269,7 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
             resultado_map[r.simuladoId] = r
 
     inscricoes_set: set[str] = set()
+    inscritos_por_simulado: dict[str, int] = {}
     if simulados_visiveis:
         inscricoes = await db.inscricaoaluno.find_many(
             where={
@@ -269,6 +278,15 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
             }
         )
         inscricoes_set = {i.simuladoId for i in inscricoes}
+
+        contagens = await db.inscricaoaluno.group_by(
+            by=["simuladoId"],
+            where={"simuladoId": {"in": [s.id for s in simulados_visiveis]}},
+            count=True,
+        )
+        inscritos_por_simulado = {
+            c["simuladoId"]: c["_count"]["_all"] for c in contagens
+        }
 
     return [
         EtapaDisponivelResponse(
@@ -283,16 +301,94 @@ async def etapas_disponiveis(usuario=Depends(get_current_user)):
             duracaoMinutos=s.duracaoMinutos,
             totalQuestoes=s.qtdFacil + s.qtdMedio + s.qtdDificil,
             vagas=s.vagas,
+            vagasTotais=s.vagas,
+            vagasDisponiveis=max(s.vagas - inscritos_por_simulado.get(s.id, 0), 0),
             janelaInicio=s.janelaInicio,
             janelaFim=s.janelaFim,
             ativa=_aware(s.janelaInicio) <= agora <= _aware(s.janelaFim),
             jaIniciada=s.id in resultado_map,
             inscrito=s.id in inscricoes_set,
+            geraCertificado=s.geraCertificado,
             statusResultado=resultado_map[s.id].statusResultado if s.id in resultado_map else None,
             resultadoId=resultado_map[s.id].id if s.id in resultado_map else None,
         )
         for s in simulados_visiveis
     ]
+
+
+@router.get("/certificados", response_model=list[CertificadoItem])
+async def listar_certificados(usuario=Depends(get_current_user)):
+    _require_aluno(usuario)
+    aluno = await _buscar_aluno_do_usuario(usuario.id)
+
+    certificados = await db.certificado.find_many(
+        where={"alunoId": aluno.id, "tipo": "CONCLUSAO"},
+        include={"nivel": True},
+        order={"emitidoEm": "desc"},
+    )
+
+    return [
+        CertificadoItem(
+            id=c.id,
+            tipo=c.tipo,
+            nivel=c.nivel.nome,
+            anoReferencia=c.anoReferencia,
+            codigoVerificacao=c.codigoVerificacao,
+            emitidoEm=c.emitidoEm,
+            componentesAprovados=[
+                ComponenteAprovadoItem(componente=item["componente"], nota=item["nota"])
+                for item in (c.componentesAprovados or [])
+            ],
+        )
+        for c in certificados
+    ]
+
+
+@router.get("/aproveitamento", response_model=list[AproveitamentoNivel])
+async def listar_aproveitamento(usuario=Depends(get_current_user)):
+    _require_aluno(usuario)
+    aluno = await _buscar_aluno_do_usuario(usuario.id)
+    ano = _agora().year
+
+    niveis = await db.nivelensino.find_many(
+        where={"ativo": True, "componentesNivel": {"some": {}}},
+        include={"componentesNivel": {"include": {"componente": True}}},
+        order=[{"ordem": "asc"}, {"nome": "asc"}],
+    )
+
+    aprovacoes = await db.aproveitamentocandidato.find_many(
+        where={"alunoId": aluno.id, "anoReferencia": ano, "aprovado": True},
+    )
+    nota_por_chave = {(a.nivelId, a.componenteId): a.notaObtida for a in aprovacoes}
+
+    resultado = []
+    for nivel in niveis:
+        componentes = []
+        aprovados = 0
+        for nc in nivel.componentesNivel:
+            chave = (nivel.id, nc.componenteId)
+            ok = chave in nota_por_chave
+            if ok:
+                aprovados += 1
+            componentes.append(
+                ComponenteProgresso(
+                    componente=nc.componente.nome,
+                    aprovado=ok,
+                    nota=nota_por_chave.get(chave),
+                )
+            )
+        componentes.sort(key=lambda c: c.componente)
+        resultado.append(
+            AproveitamentoNivel(
+                nivel=nivel.nome,
+                anoReferencia=ano,
+                totalComponentes=len(componentes),
+                aprovados=aprovados,
+                componentes=componentes,
+            )
+        )
+
+    return resultado
 
 
 @router.post("/inscrever/{simulado_id}", response_model=InscricaoResponse)
@@ -322,6 +418,15 @@ async def inscrever_em_prova(simulado_id: str, usuario=Depends(get_current_user)
         where={"simuladoId_alunoId": {"simuladoId": simulado_id, "alunoId": aluno.id}}
     )
     if not existente:
+        total_inscritos = await db.inscricaoaluno.count(
+            where={"simuladoId": simulado_id}
+        )
+        if total_inscritos >= simulado.vagas:
+            raise HTTPException(
+                status_code=422,
+                detail="Não há mais vagas disponíveis para esta prova",
+            )
+
         await db.inscricaoaluno.create(
             data={
                 "simulado": {"connect": {"id": simulado_id}},
@@ -341,8 +446,22 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
         where={"id": simulado_id},
         include={"componente": True},
     )
-    if not simulado or simulado.status != "PUBLICADO":
-        raise HTTPException(status_code=404, detail="Etapa não encontrada")
+    gera_cert = getattr(simulado, "geraCertificado", False)
+    nivel_id = getattr(simulado, "nivelEnsinoId", None)
+    if gera_cert and nivel_id:
+        nivel = await db.nivelensino.find_unique(where={"id": nivel_id})
+        tipo_candidato = getattr(usuario, "tipoCandidato", "REGULAR")
+        prereq_validado = getattr(usuario, "prereqValidado", True)
+        if (
+            nivel
+            and getattr(nivel, "ordem", 1) > 1
+            and tipo_candidato == "EXTERNO"
+            and not prereq_validado
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Pré-requisito de Ensino Fundamental II não validado para este candidato",
+            )
 
     agora = _agora()
     janela_inicio = _aware(simulado.janelaInicio)
@@ -353,7 +472,7 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
 
     resultado_existente = await db.resultadoaluno.find_first(
         where={"simuladoId": simulado_id, "alunoId": aluno.id},
-        include={"tentativasQuestoes": {"include": {"questao": True}}},
+        include={"tentativasQuestoes": True},
     )
 
     if resultado_existente:
@@ -403,13 +522,13 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
                 if isinstance(alts_raw, list)
                 else [
                     AlternativaParaAluno(letra=a.get("letra", ""), texto=a.get("texto", ""))
-                    for a in (tq.questao.alternativas if isinstance(tq.questao.alternativas, list) else [])
+                    for a in (tq.alternativas if isinstance(tq.alternativas, list) else [])
                 ]
             )
             questoes.append(QuestaoParaAluno(
                 ordem=tq.ordem,
                 questaoId=tq.questaoId,
-                enunciado=tq.questao.enunciado,
+                enunciado=tq.enunciado,
                 alternativas=alts,
                 respostaSalva=tq.alternativaMarcada,
             ))
@@ -423,15 +542,46 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
             questoes=questoes,
         )
 
+    if simulado.geraCertificado and simulado.nivelEnsinoId:
+        ano = agora.year
+        inicio_ano = datetime(ano, 1, 1, tzinfo=timezone.utc)
+        fim_ano = datetime(ano + 1, 1, 1, tzinfo=timezone.utc)
+        tentativas_ano = await db.resultadoaluno.count(
+            where={
+                "alunoId": aluno.id,
+                "iniciadoEm": {"gte": inicio_ano, "lt": fim_ano},
+                "simulado": {
+                    "is": {
+                        "geraCertificado": True,
+                        "nivelEnsinoId": simulado.nivelEnsinoId,
+                    }
+                },
+            }
+        )
+        if tentativas_ano >= 3:
+            raise HTTPException(
+                status_code=403,
+                detail="Limite de 3 tentativas anuais para este nível foi atingido",
+            )
+
+    # Resolve todos os componentes da etapa (multi-componente estilo ENEM);
+    # fallback para o componente principal em etapas antigas sem componenteIds.
+    componente_ids = getattr(simulado, "componenteIds", None)
+    if not isinstance(componente_ids, list) or not componente_ids:
+        componente_ids = [simulado.componenteId]
+
     selecionadas = getattr(simulado, "questoesSelecionadas", None)
+
     if isinstance(selecionadas, list) and selecionadas:
-        questoes_sorteadas = await montar_questoes_selecionadas(selecionadas)
+        questoes_sorteadas = await montar_questoes_selecionadas_multi(
+            componente_ids, selecionadas
+        )
     else:
-        questoes_sorteadas = await sortear_questoes_para_prova(
-            componente_id=simulado.componenteId,
-            qtd_facil=simulado.qtdFacil,
-            qtd_medio=simulado.qtdMedio,
-            qtd_dificil=simulado.qtdDificil,
+        questoes_sorteadas = await sortear_questoes_para_prova_multi(
+            componente_ids,
+            simulado.qtdFacil,
+            simulado.qtdMedio,
+            simulado.qtdDificil,
         )
 
     iniciado_em = _agora()
@@ -463,7 +613,11 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
         await db.tentativaquestao.create(
             data={
                 "resultado": {"connect": {"id": novo_resultado.id}},
-                "questao": {"connect": {"id": q["questaoId"]}},
+                "questaoId": q["questaoId"],
+                "enunciado": q["enunciado"],
+                "urlImagem": q.get("urlImagem"),
+                "alternativas": Json(alternativas_originais),
+                "respostaCorreta": resposta_correta,
                 "ordem": q["ordem"],
                 **({"alternativasEmbaralhadas": alts_para_salvar} if alts_para_salvar else {}),
             }
@@ -544,7 +698,7 @@ async def submeter_prova(resultado_id: str, usuario=Depends(get_current_user)):
         where={"id": resultado_id},
         include={
             "simulado": {"include": {"componente": True}},
-            "tentativasQuestoes": {"include": {"questao": True}},
+            "tentativasQuestoes": True,
         },
     )
     if not resultado:
@@ -570,6 +724,11 @@ async def submeter_prova(resultado_id: str, usuario=Depends(get_current_user)):
             "finalizadoEm": agora,
         },
     )
+
+    if status_final == "FINALIZADO":
+        await processar_certificacao(
+            resultado.simulado, resultado_id, aluno.id, pontuacao, agora
+        )
 
     janela_fim = _aware(resultado.simulado.janelaFim)
 
@@ -597,7 +756,7 @@ async def ver_resultado(resultado_id: str, usuario=Depends(get_current_user)):
         where={"id": resultado_id},
         include={
             "simulado": {"include": {"componente": True}},
-            "tentativasQuestoes": {"include": {"questao": True}},
+            "tentativasQuestoes": True,
         },
     )
     if not resultado:
@@ -655,7 +814,7 @@ async def historico(usuario=Depends(get_current_user)):
         },
         include={
             "simulado": {"include": {"componente": True}},
-            "tentativasQuestoes": {"include": {"questao": True}},
+            "tentativasQuestoes": True,
         },
         order={"finalizadoEm": "desc"},
     )
@@ -683,3 +842,37 @@ async def historico(usuario=Depends(get_current_user)):
         ))
 
     return historico_items
+
+@router.get("/prova-em-andamento")
+async def prova_em_andamento(usuario=Depends(get_current_user)):
+    _require_aluno(usuario)
+    aluno = await _buscar_aluno_do_usuario(usuario.id)
+
+    resultado = await db.resultadoaluno.find_first(
+        where={
+            "alunoId": aluno.id,
+            "statusResultado": "EM_ANDAMENTO",
+        },
+        include={"simulado": True},
+    )
+
+    if not resultado or not resultado.simulado:
+        return {"emAndamento": False}
+
+    agora = _agora()
+    iniciado_em = _aware(resultado.iniciadoEm)
+    expira_em = iniciado_em + timedelta(minutes=resultado.simulado.duracaoMinutos)
+
+    if agora > expira_em:
+        await db.resultadoaluno.update(
+            where={"id": resultado.id},
+            data={"statusResultado": "EXPIRADO"},
+        )
+        return {"emAndamento": False}
+
+    return {
+        "emAndamento": True,
+        "simuladoId": resultado.simuladoId,
+        "resultadoId": resultado.id,
+        "expiraEm": expira_em.isoformat(),
+    }

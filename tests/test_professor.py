@@ -2,11 +2,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
-from prisma import Json
 
 from src.database import db
 
-ENDPOINTS = ["/professor/turmas", "/professor/questoes", "/professor/resultados"]
+ENDPOINTS = ["/professor/turmas", "/professor/resultados"]
 
 
 @pytest.mark.asyncio
@@ -31,49 +30,33 @@ async def test_professor_endpoints_respondem_lista(
     assert isinstance(resp.json(), list)
 
 
-@pytest_asyncio.fixture
-async def questao_de_outro_professor(conexao_db):
-    assunto = await db.assunto.find_first()
-    usuario = await db.usuario.create(
-        data={
-            "nome": "Professor Externo TESTE",
-            "cpf": "90000000001",
-            "senhaHash": "x",
-            "tipo": "PROFESSOR",
-            "ativo": True,
-        }
-    )
-    professor = await db.professor.create(
-        data={"usuario": {"connect": {"id": usuario.id}}}
-    )
-    questao = await db.questao.create(
-        data={
-            "professor": {"connect": {"id": professor.id}},
-            "componente": {"connect": {"id": assunto.componenteId}},
-            "assunto": {"connect": {"id": assunto.id}},
-            "tipo": "MULTIPLA_ESCOLHA",
-            "dificuldade": "FACIL",
-            "enunciado": "Questao de outro professor TESTE",
-            "alternativas": Json(
-                [{"letra": "A", "texto": "1"}, {"letra": "B", "texto": "2"}]
-            ),
-            "respostaCorreta": "A",
-        }
-    )
-    yield questao.id
-    await db.questao.delete(where={"id": questao.id})
-    await db.professor.delete(where={"id": professor.id})
-    await db.usuario.delete(where={"id": usuario.id})
+@pytest.mark.asyncio
+async def test_professor_questoes_bloqueia_nao_professor(
+    client, token_admin, token_aluno, auth
+):
+    comp = await db.componentecurricular.find_first(where={"ativo": True})
+    url = f"/professor/questoes?componenteId={comp.id}"
+    assert (await client.get(url, headers=auth(token_admin))).status_code == 403
+    assert (await client.get(url, headers=auth(token_aluno))).status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_professor_so_ve_proprias_questoes(
-    client, token_professor, auth, questao_de_outro_professor
-):
-    resp = await client.get("/professor/questoes", headers=auth(token_professor))
+async def test_professor_questoes_lista_banco_da_api(client, token_professor, auth):
+    comp = await db.componentecurricular.find_first(where={"ativo": True})
+    resp = await client.get(
+        f"/professor/questoes?componenteId={comp.id}",
+        headers=auth(token_professor),
+    )
     assert resp.status_code == 200
-    ids = [q["id"] for q in resp.json()]
-    assert questao_de_outro_professor not in ids
+    corpo = resp.json()
+    assert isinstance(corpo, list) and len(corpo) > 0
+    assert all(q["componente"] == comp.nome for q in corpo)
+
+
+@pytest.mark.asyncio
+async def test_professor_questoes_exige_componente(client, token_professor, auth):
+    resp = await client.get("/professor/questoes", headers=auth(token_professor))
+    assert resp.status_code == 422
 
 
 @pytest_asyncio.fixture
