@@ -816,11 +816,13 @@ class ComponenteCreate(BaseModel):
     nome: str = Field(min_length=1, max_length=100)
     codigo: str = Field(min_length=1, max_length=20)
     assuntos: list[str] = []
+    questionsSubjectSlug: str | None = None
 
 
 class ComponenteUpdate(BaseModel):
     nome: str = Field(min_length=1, max_length=100)
     codigo: str = Field(min_length=1, max_length=20)
+    questionsSubjectSlug: str | None = None
 
 
 class AssuntoCreate(BaseModel):
@@ -875,6 +877,7 @@ class ComponenteResponse(BaseModel):
     nome: str
     codigo: str
     ativo: bool
+    questionsSubjectSlug: str | None = None
     totalAssuntos: int = 0
     totalQuestoes: int = 0
     assuntos: list[AssuntoResponseSimples] = []

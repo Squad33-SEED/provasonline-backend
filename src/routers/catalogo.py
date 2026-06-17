@@ -266,10 +266,12 @@ async def criar_componente(data: ComponenteCreate, _=Depends(require_admin)):
     if not modalidade or not modalidade.ativo:
         raise HTTPException(status_code=422, detail="Modalidade não encontrada ou inativa")
 
+    slug = (data.questionsSubjectSlug or "").strip() or None
     componente = await db.componentecurricular.create(
         data={
             "nome": data.nome,
             "codigo": data.codigo,
+            "questionsSubjectSlug": slug,
             "modalidade": {"connect": {"id": data.modalidadeId}},
         }
     )
@@ -291,6 +293,7 @@ async def criar_componente(data: ComponenteCreate, _=Depends(require_admin)):
         nome=componente.nome,
         codigo=componente.codigo,
         ativo=componente.ativo,
+        questionsSubjectSlug=componente.questionsSubjectSlug,
         totalAssuntos=len(assuntos_criados),
         totalQuestoes=0,
         assuntos=assuntos_criados,
@@ -305,9 +308,10 @@ async def editar_componente(
     if not componente:
         raise HTTPException(status_code=404, detail="Componente não encontrado")
 
+    slug = (data.questionsSubjectSlug or "").strip() or None
     atualizado = await db.componentecurricular.update(
         where={"id": componente_id},
-        data={"nome": data.nome, "codigo": data.codigo},
+        data={"nome": data.nome, "codigo": data.codigo, "questionsSubjectSlug": slug},
     )
     return ComponenteResponse(
         id=atualizado.id,
@@ -315,6 +319,7 @@ async def editar_componente(
         nome=atualizado.nome,
         codigo=atualizado.codigo,
         ativo=atualizado.ativo,
+        questionsSubjectSlug=atualizado.questionsSubjectSlug,
     )
 
 
@@ -347,6 +352,7 @@ async def toggle_componente(componente_id: str, _=Depends(require_admin)):
         nome=atualizado.nome,
         codigo=atualizado.codigo,
         ativo=atualizado.ativo,
+        questionsSubjectSlug=atualizado.questionsSubjectSlug,
         totalAssuntos=n_assuntos,
         totalQuestoes=n_questoes_total,
     )
@@ -398,6 +404,7 @@ async def listar_componentes_admin(_=Depends(require_admin)):
                 nome=c.nome,
                 codigo=c.codigo,
                 ativo=c.ativo,
+                questionsSubjectSlug=c.questionsSubjectSlug,
                 totalAssuntos=len(assuntos),
                 totalQuestoes=contagem.get(c.id, 0),
                 assuntos=[AssuntoResponseSimples(id=a.id, nome=a.nome, ativo=a.ativo) for a in assuntos],
