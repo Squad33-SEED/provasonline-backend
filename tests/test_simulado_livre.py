@@ -4,14 +4,12 @@ from src.database import db
 
 
 async def _componente_com_questoes(minimo=2):
-    questoes = await db.questao.find_many(where={"ativa": True})
-    contagem: dict[str, int] = {}
-    for q in questoes:
-        contagem[q.componenteId] = contagem.get(q.componenteId, 0) + 1
-    for cid, n in contagem.items():
-        if n >= minimo:
-            return cid
-    return None
+    # Pós-migração, as questões vêm da API externa (mockada no conftest);
+    # basta um componente vinculado a uma matéria (questionsSubjectSlug).
+    comp = await db.componentecurricular.find_first(
+        where={"ativo": True, "questionsSubjectSlug": {"not": None}}
+    )
+    return comp.id if comp else None
 
 
 async def _limpar(simulado_id):

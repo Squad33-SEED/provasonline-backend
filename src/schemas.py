@@ -191,7 +191,8 @@ class AlunoListItem(BaseModel):
 class SimuladoCreate(BaseModel):
     titulo: str = Field(min_length=3, max_length=200)
     descricao: str | None = Field(default=None, max_length=2000)
-    componenteId: str = Field(min_length=1)
+    componenteId: str | None = Field(default=None, min_length=1)
+    componenteIds: list[str] = Field(default_factory=list)
     qtdFacil: int = Field(ge=0, le=100)
     qtdMedio: int = Field(ge=0, le=100)
     qtdDificil: int = Field(ge=0, le=100)
@@ -208,6 +209,15 @@ class SimuladoCreate(BaseModel):
 
     @model_validator(mode="after")
     def validar_regras_compostas(self):
+        if not self.componenteIds:
+            if self.componenteId:
+                self.componenteIds = [self.componenteId]
+            else:
+                raise ValueError("Selecione ao menos um componente curricular")
+
+        self.componenteIds = list(dict.fromkeys(self.componenteIds))
+        self.componenteId = self.componenteIds[0]
+
         modo_manual = len(self.questaoIds) > 0
         if not modo_manual and self.qtdFacil + self.qtdMedio + self.qtdDificil < 1:
             raise ValueError("Total de questões deve ser pelo menos 1")
@@ -236,6 +246,7 @@ class SimuladoResponse(BaseModel):
     titulo: str
     descricao: str | None
     componente: ComponenteResumo
+    componentes: list[ComponenteResumo] = []
     qtdFacil: int
     qtdMedio: int
     qtdDificil: int
@@ -749,3 +760,31 @@ class AproveitamentoNivel(BaseModel):
     totalComponentes: int
     aprovados: int
     componentes: list[ComponenteProgresso]
+
+class IpCreate(BaseModel):
+    ip: str = Field(min_length=1, max_length=45)
+    descricao: str | None = None
+
+
+class IpUpdate(BaseModel):
+    ip: str | None = Field(default=None, min_length=1, max_length=45)
+    descricao: str | None = None
+    ativo: bool | None = None
+
+
+class IpResponse(BaseModel):
+    id: str
+    ip: str
+    descricao: str | None = None
+    ativo: bool
+    criadoEm: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProvaEmAndamentoResponse(BaseModel):
+    emAndamento: bool
+    simuladoId: str | None = None
+    resultadoId: str | None = None
+    expiraEm: str | None = None

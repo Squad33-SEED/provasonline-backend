@@ -21,10 +21,13 @@ from src.schemas import (
     TurmaResumoSimples,
 )
 from src.routers.aluno import _contar_acertos, _agora, _aware
+from src.services import questions_api
 from src.services.sorteio_questoes import (
     contar_disponiveis,
-    verificar_disponibilidade,
+    verificar_disponibilidade_multi,
 )
+
+DIFICULDADE_API_PARA_PROVAS = {"easy": "FACIL", "medium": "MEDIO", "hard": "DIFICIL"}
 
 router = APIRouter(prefix="/simulados", tags=["Simulados"])
 
@@ -34,10 +37,48 @@ _INCLUDE_COMPLETO = {
 }
 
 
-def _serializar_simulado(simulado_obj, total_inscritos: int = 0) -> SimuladoResponse:
-    componente = simulado_obj.componente
-    modalidade = componente.modalidade
+def _resumo_componente(componente) -> ComponenteResumo:
+    return ComponenteResumo(
+        id=componente.id,
+        nome=componente.nome,
+        modalidade=ModalidadeResumo(
+            id=componente.modalidade.id,
+            nome=componente.modalidade.nome,
+        ),
+    )
+
+
+async def _mapa_componentes(simulados) -> dict[str, ComponenteResumo]:
+    """Pré-carrega (em 1 query) os componentes referenciados em componenteIds."""
+    ids: set[str] = set()
+    for s in simulados:
+        cids = getattr(s, "componenteIds", None)
+        if isinstance(cids, list):
+            ids.update(cids)
+    if not ids:
+        return {}
+    componentes = await db.componentecurricular.find_many(
+        where={"id": {"in": list(ids)}},
+        include={"modalidade": True},
+    )
+    return {c.id: _resumo_componente(c) for c in componentes}
+
+
+def _serializar_simulado(
+    simulado_obj,
+    total_inscritos: int = 0,
+    componentes_por_id: dict[str, ComponenteResumo] | None = None,
+) -> SimuladoResponse:
+    principal = _resumo_componente(simulado_obj.componente)
     total = simulado_obj.qtdFacil + simulado_obj.qtdMedio + simulado_obj.qtdDificil
+
+    ids = getattr(simulado_obj, "componenteIds", None)
+    if isinstance(ids, list) and ids and componentes_por_id:
+        componentes = [componentes_por_id[i] for i in ids if i in componentes_por_id]
+    else:
+        componentes = []
+    if not componentes:
+        componentes = [principal]
 
     turmas: list[TurmaResumoSimples] = []
     if simulado_obj.aplicacoes:
@@ -54,14 +95,8 @@ def _serializar_simulado(simulado_obj, total_inscritos: int = 0) -> SimuladoResp
         id=simulado_obj.id,
         titulo=simulado_obj.titulo,
         descricao=simulado_obj.descricao,
-        componente=ComponenteResumo(
-            id=componente.id,
-            nome=componente.nome,
-            modalidade=ModalidadeResumo(
-                id=modalidade.id,
-                nome=modalidade.nome,
-            ),
-        ),
+        componente=principal,
+        componentes=componentes,
         qtdFacil=simulado_obj.qtdFacil,
         qtdMedio=simulado_obj.qtdMedio,
         qtdDificil=simulado_obj.qtdDificil,
@@ -126,28 +161,29 @@ async def listar_banco_questoes(
     dificuldade: str | None = Query(default=None),
     _=Depends(require_admin),
 ):
-    where: dict = {"componenteId": componenteId, "ativa": True}
-    if assuntoId:
-        where["assuntoId"] = assuntoId
-    if dificuldade in ("FACIL", "MEDIO", "DIFICIL"):
-        where["dificuldade"] = dificuldade
-
-    questoes = await db.questao.find_many(
-        where=where,
-        include={"assunto": True},
-        order={"criadoEm": "desc"},
-    )
-
-    return [
-        QuestaoBanco(
-            id=q.id,
-            enunciado=q.enunciado,
-            assunto=q.assunto.nome if q.assunto else "",
-            dificuldade=q.dificuldade,
-            componenteId=q.componenteId,
+    componente = await db.componentecurricular.find_unique(where={"id": componenteId})
+    if not componente or not componente.questionsSubjectSlug:
+        raise HTTPException(
+            status_code=422,
+            detail="Componente não está vinculado a uma matéria da API de questões",
         )
-        for q in questoes
-    ]
+
+    slug = componente.questionsSubjectSlug
+    dificuldades = [dificuldade] if dificuldade in ("FACIL", "MEDIO", "DIFICIL") else ["FACIL", "MEDIO", "DIFICIL"]
+
+    resultado: list[QuestaoBanco] = []
+    for dif in dificuldades:
+        for q in await questions_api.listar_questoes(slug, dif):
+            topico = q.get("topic") or {}
+            resultado.append(QuestaoBanco(
+                id=q.get("id"),
+                enunciado=q.get("title", ""),
+                assunto=topico.get("name", ""),
+                dificuldade=dif,
+                componenteId=componenteId,
+            ))
+
+    return resultado
 
 
 @router.post("/gerar-rapido", response_model=SimuladoResponse, status_code=201)
@@ -221,19 +257,24 @@ async def gerar_rapido(data: GeracaoRapidaCreate, _=Depends(require_admin)):
         include=_INCLUDE_COMPLETO,
     )
 
-    return _serializar_simulado(simulado_completo)
+    mapa_comp = await _mapa_componentes([simulado_completo])
+    return _serializar_simulado(simulado_completo, componentes_por_id=mapa_comp)
 
 
 @router.post("", response_model=SimuladoResponse, status_code=201)
 async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
-    componente = await db.componentecurricular.find_unique(
-        where={"id": data.componenteId},
+    componente_ids = list(dict.fromkeys(data.componenteIds or [data.componenteId]))
+    componente_principal_id = componente_ids[0]
+
+    componentes = await db.componentecurricular.find_many(
+        where={"id": {"in": componente_ids}, "ativo": True},
         include={"modalidade": True},
     )
-    if not componente or not componente.ativo:
+
+    if len(componentes) != len(componente_ids):
         raise HTTPException(
             status_code=422,
-            detail="Componente curricular não encontrado ou inativo",
+            detail="Um ou mais componentes curriculares não foram encontrados ou estão inativos",
         )
 
     if data.geraCertificado:
@@ -251,34 +292,37 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
 
     if data.questaoIds:
         ids_unicos = list(dict.fromkeys(data.questaoIds))
-        questoes = await db.questao.find_many(
-            where={
-                "id": {"in": ids_unicos},
-                "componenteId": data.componenteId,
-                "ativa": True,
-            }
-        )
-        if len(questoes) != len(ids_unicos):
+        slugs = [c.questionsSubjectSlug for c in componentes if c.questionsSubjectSlug]
+        if not slugs:
             raise HTTPException(
                 status_code=422,
-                detail="Há questões inválidas ou de outro componente na seleção",
+                detail="Componente não está vinculado a uma matéria da API de questões",
             )
-        qtd_facil = sum(1 for q in questoes if q.dificuldade == "FACIL")
-        qtd_medio = sum(1 for q in questoes if q.dificuldade == "MEDIO")
-        qtd_dificil = sum(1 for q in questoes if q.dificuldade == "DIFICIL")
-        questoes_selecionadas = Json([q.id for q in questoes])
+        faceis: set[str] = set()
+        medias: set[str] = set()
+        dificeis: set[str] = set()
+        for slug in slugs:
+            faceis |= {q.get("id") for q in await questions_api.listar_questoes(slug, "FACIL")}
+            medias |= {q.get("id") for q in await questions_api.listar_questoes(slug, "MEDIO")}
+            dificeis |= {q.get("id") for q in await questions_api.listar_questoes(slug, "DIFICIL")}
+        validos = faceis | medias | dificeis
+        if any(qid not in validos for qid in ids_unicos):
+            raise HTTPException(
+                status_code=422,
+                detail="Há questões inválidas ou de outra matéria na seleção",
+            )
+        qtd_facil = sum(1 for qid in ids_unicos if qid in faceis)
+        qtd_medio = sum(1 for qid in ids_unicos if qid in medias)
+        qtd_dificil = sum(1 for qid in ids_unicos if qid in dificeis)
+        questoes_selecionadas = Json(ids_unicos)
     else:
-        disponivel, faltas = await verificar_disponibilidade(
-            data.componenteId,
-            qtd_facil,
-            qtd_medio,
-            qtd_dificil,
+        # Sorteio automático: valida disponibilidade na API de questões,
+        # somando o banco de TODOS os componentes da etapa (estilo ENEM).
+        disponivel, faltas = await verificar_disponibilidade_multi(
+            componente_ids, qtd_facil, qtd_medio, qtd_dificil
         )
         if not disponivel:
-            raise HTTPException(
-                status_code=422,
-                detail=" · ".join(faltas),
-            )
+            raise HTTPException(status_code=422, detail=" · ".join(faltas))
 
     turmas_validas: list[str] = []
     for turma_id in data.turmaIds:
@@ -301,7 +345,8 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
         data={
             "titulo": data.titulo,
             "descricao": data.descricao,
-            "componente": {"connect": {"id": data.componenteId}},
+            "componente": {"connect": {"id": componente_principal_id}},
+            "componenteIds": Json(componente_ids),
             "professor": {"connect": {"id": professor_demo.id}},
             "qtdFacil": qtd_facil,
             "qtdMedio": qtd_medio,
@@ -335,7 +380,8 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
         include=_INCLUDE_COMPLETO,
     )
 
-    return _serializar_simulado(simulado_completo)
+    mapa_comp = await _mapa_componentes([simulado_completo])
+    return _serializar_simulado(simulado_completo, componentes_por_id=mapa_comp)
 
 
 @router.get("", response_model=list[SimuladoResponse])
@@ -356,8 +402,9 @@ async def listar_simulados(_=Depends(get_current_user)):
             c["simuladoId"]: c["_count"]["_all"] for c in contagens
         }
 
+    mapa_comp = await _mapa_componentes(simulados)
     return [
-        _serializar_simulado(s, inscritos_por_simulado.get(s.id, 0))
+        _serializar_simulado(s, inscritos_por_simulado.get(s.id, 0), mapa_comp)
         for s in simulados
     ]
 
@@ -505,7 +552,8 @@ async def buscar_simulado(simulado_id: str, _=Depends(get_current_user)):
     total_inscritos = await db.inscricaoaluno.count(
         where={"simuladoId": simulado_id}
     )
-    return _serializar_simulado(simulado, total_inscritos)
+    mapa_comp = await _mapa_componentes([simulado])
+    return _serializar_simulado(simulado, total_inscritos, mapa_comp)
 
 
 @router.get("/{simulado_id}/relatorio", response_model=RelatorioEtapaResponse)
@@ -530,7 +578,7 @@ async def relatorio_etapa(simulado_id: str, _=Depends(require_admin)):
                     },
                 }
             },
-            "tentativasQuestoes": {"include": {"questao": True}},
+            "tentativasQuestoes": True,
         },
         order={"finalizadoEm": "desc"},
     )

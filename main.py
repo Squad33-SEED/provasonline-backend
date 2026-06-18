@@ -7,6 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from src.database import connect, disconnect
+from src.security import settings
 from src.routers.alunos import router as alunos_router
 from src.routers.auth import limiter as auth_limiter
 from src.routers.auth import router as auth_router
@@ -19,8 +20,8 @@ from src.routers.aluno import router as aluno_router
 from src.routers.violacoes import router as violacoes_router
 from src.routers.professor import router as professor_router
 from src.routers.professores import router as professores_router
-from src.routers.questoes import router as questoes_router
 from src.routers.certificados import router as certificados_router
+from src.routers.ips import router as ips_router
 
 
 def rate_limit_exceeded_handler(request, exc: RateLimitExceeded):
@@ -53,7 +54,7 @@ app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=".*",
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,8 +71,8 @@ app.include_router(aluno_router)
 app.include_router(violacoes_router)
 app.include_router(professor_router)
 app.include_router(professores_router)
-app.include_router(questoes_router)
 app.include_router(certificados_router)
+app.include_router(ips_router)
 
 
 @app.get("/", tags=["Health"])

@@ -73,22 +73,29 @@ async def processar_certificacao(simulado, resultado_id: str, aluno_id: str, pon
     aprovados_ids = {a.componenteId for a in aprovados}
 
     completo = len(requeridos_ids) > 0 and requeridos_ids.issubset(aprovados_ids)
-    tipo = "CONCLUSAO" if completo else "PROFICIENCIA_PARCIAL"
+
+    # Decisão de produto (mentoria): não existe certificado parcial — o sistema
+    # só emite o de CONCLUSÃO, quando todos os componentes obrigatórios do nível
+    # foram aprovados. Enquanto não completa, nada é emitido (passou ou reprovou).
+    if not completo:
+        return
+
+    tipo = "CONCLUSAO"
 
     componentes_aprovados = [
         {"componente": a.componente.nome, "nota": a.notaObtida}
         for a in sorted(aprovados, key=lambda a: a.componente.nome)
     ]
 
-    if completo:
-        await db.certificado.delete_many(
-            where={
-                "alunoId": aluno_id,
-                "nivelId": nivel_id,
-                "anoReferencia": ano,
-                "tipo": "PROFICIENCIA_PARCIAL",
-            }
-        )
+    # Remove eventual parcial legado (emitido antes desta regra) deste aluno/nível/ano.
+    await db.certificado.delete_many(
+        where={
+            "alunoId": aluno_id,
+            "nivelId": nivel_id,
+            "anoReferencia": ano,
+            "tipo": "PROFICIENCIA_PARCIAL",
+        }
+    )
 
     existente = await db.certificado.find_unique(
         where={
