@@ -603,6 +603,7 @@ class RelatorioEtapaResponse(BaseModel):
     simuladoId: str
     titulo: str
     componente: str
+    inscritos: int = 0
     totalAlunos: int
     finalizados: int
     mediaNota: float | None = None
