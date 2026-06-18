@@ -144,7 +144,17 @@ async def obter_disponibilidade(
             detail="Componente curricular não encontrado",
         )
 
-    contadores = await contar_disponiveis(componenteId)
+    try:
+        contadores = await contar_disponiveis(componenteId)
+    except HTTPException as exc:
+        if exc.status_code != 502:
+            raise
+
+        contadores = {
+            "facil": 0,
+            "medio": 0,
+            "dificil": 0,
+        }
 
     return DisponibilidadeQuestoes(
         componenteId=componenteId,
@@ -616,10 +626,15 @@ async def relatorio_etapa(simulado_id: str, _=Depends(require_admin)):
     media = round(sum(notas) / len(notas), 1) if notas else None
     percentual = round(media * 10, 1) if media is not None else None
 
+    total_inscritos = await db.inscricaoaluno.count(
+        where={"simuladoId": simulado_id}
+    )
+
     return RelatorioEtapaResponse(
         simuladoId=simulado.id,
         titulo=simulado.titulo,
         componente=simulado.componente.nome if simulado.componente else "—",
+        inscritos=total_inscritos,
         totalAlunos=len(resultados),
         finalizados=finalizados,
         mediaNota=media,

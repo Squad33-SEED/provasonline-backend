@@ -297,7 +297,7 @@ class IniciarProvaResponse(BaseModel):
 
 class RespostaItem(BaseModel):
     questaoId: str
-    resposta: str = Field(pattern=r"^[ABCDabcd]$")
+    resposta: str = Field(pattern=r"^[A-Ea-e]$")
 
 
 class AutoSaveRequest(BaseModel):
@@ -603,6 +603,7 @@ class RelatorioEtapaResponse(BaseModel):
     simuladoId: str
     titulo: str
     componente: str
+    inscritos: int = 0
     totalAlunos: int
     finalizados: int
     mediaNota: float | None = None

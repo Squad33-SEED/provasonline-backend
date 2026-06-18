@@ -234,22 +234,87 @@ async def sortear_questoes_para_prova_multi(
     qtd_dificil: int,
 ) -> list[dict]:
     slugs = await _subject_slugs(componente_ids)
-    faceis, medias, dificeis = await _pools_por_dificuldade(slugs)
 
-    if qtd_facil > len(faceis) or qtd_medio > len(medias) or qtd_dificil > len(dificeis):
+    pools_por_componente: list[dict[str, list[dict]]] = []
+
+    for slug in slugs:
+        faceis, medias, dificeis = await _pools_por_dificuldade([slug])
+
+        random.shuffle(faceis)
+        random.shuffle(medias)
+        random.shuffle(dificeis)
+
+        pools_por_componente.append(
+            {
+                "FACIL": faceis,
+                "MEDIO": medias,
+                "DIFICIL": dificeis,
+            }
+        )
+
+    todas_faceis = _dedup_por_id(
+        [q for pools in pools_por_componente for q in pools["FACIL"]]
+    )
+    todas_medias = _dedup_por_id(
+        [q for pools in pools_por_componente for q in pools["MEDIO"]]
+    )
+    todas_dificeis = _dedup_por_id(
+        [q for pools in pools_por_componente for q in pools["DIFICIL"]]
+    )
+
+    if (
+        qtd_facil > len(todas_faceis)
+        or qtd_medio > len(todas_medias)
+        or qtd_dificil > len(todas_dificeis)
+    ):
         raise HTTPException(
             status_code=422,
             detail="Banco de questões insuficiente para a composição solicitada",
         )
 
-    selecionadas = (
-        random.sample(faceis, qtd_facil)
-        + random.sample(medias, qtd_medio)
-        + random.sample(dificeis, qtd_dificil)
-    )
-    random.shuffle(selecionadas)
-    return [_serializar_questao(q, ordem) for ordem, q in enumerate(selecionadas, start=1)]
+    def sortear_por_rodizio(dificuldade: str, quantidade: int) -> list[dict]:
+        if quantidade <= 0:
+            return []
 
+        selecionadas: list[dict] = []
+        ids_usados: set[str] = set()
+
+        while len(selecionadas) < quantidade:
+            adicionou_na_rodada = False
+
+            for pools in pools_por_componente:
+                if len(selecionadas) >= quantidade:
+                    break
+
+                pool = pools[dificuldade]
+
+                while pool:
+                    questao = pool.pop(0)
+                    qid = str(questao.get("id"))
+
+                    if qid not in ids_usados:
+                        selecionadas.append(questao)
+                        ids_usados.add(qid)
+                        adicionou_na_rodada = True
+                        break
+
+            if not adicionou_na_rodada:
+                break
+
+        return selecionadas
+
+    selecionadas = (
+        sortear_por_rodizio("FACIL", qtd_facil)
+        + sortear_por_rodizio("MEDIO", qtd_medio)
+        + sortear_por_rodizio("DIFICIL", qtd_dificil)
+    )
+
+    random.shuffle(selecionadas)
+
+    return [
+        _serializar_questao(q, ordem)
+        for ordem, q in enumerate(selecionadas, start=1)
+    ]
 
 async def montar_questoes_selecionadas_multi(
     componente_ids: list[str],
