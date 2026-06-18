@@ -144,7 +144,17 @@ async def obter_disponibilidade(
             detail="Componente curricular não encontrado",
         )
 
-    contadores = await contar_disponiveis(componenteId)
+    try:
+        contadores = await contar_disponiveis(componenteId)
+    except HTTPException as exc:
+        if exc.status_code != 502:
+            raise
+
+        contadores = {
+            "facil": 0,
+            "medio": 0,
+            "dificil": 0,
+        }
 
     return DisponibilidadeQuestoes(
         componenteId=componenteId,
