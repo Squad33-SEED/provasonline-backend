@@ -88,13 +88,15 @@ async def cenario(conexao_db):
 
 
 @pytest.mark.asyncio
-async def test_parcial_depois_conclusao(cenario):
+async def test_so_conclusao_sem_parcial(cenario):
     ag = _agora()
+    # Aprovou só 1 dos componentes obrigatórios: NÃO emite certificado
+    # (decisão de produto: não existe certificado parcial).
     await processar_certificacao(cenario["sims"][0], cenario["resultados"][0].id, cenario["aluno"].id, 8.0, ag)
-    parcial = await db.certificado.find_first(where={"alunoId": cenario["aluno"].id})
-    assert parcial is not None
-    assert parcial.tipo == "PROFICIENCIA_PARCIAL"
+    nenhum = await db.certificado.find_first(where={"alunoId": cenario["aluno"].id})
+    assert nenhum is None
 
+    # Completou todos os obrigatórios: emite o de CONCLUSÃO.
     await processar_certificacao(cenario["sims"][1], cenario["resultados"][1].id, cenario["aluno"].id, 8.0, ag)
     certs = await db.certificado.find_many(where={"alunoId": cenario["aluno"].id})
     assert len(certs) == 1
