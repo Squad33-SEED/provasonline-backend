@@ -13,6 +13,7 @@ from src.schemas import (
     CertificadoItem,
     ComponenteAprovadoItem,
     ComponenteProgresso,
+    ComponenteResultado,
     EtapaDisponivelResponse,
     GabaritoItemDetalhado,
     HistoricoItem,
@@ -105,12 +106,66 @@ def _montar_gabarito(tentativas_questoes: list) -> list[GabaritoItemDetalhado]:
         gabarito.append(GabaritoItemDetalhado(
             ordem=tq.ordem,
             questaoId=tq.questaoId,
+            componenteId=getattr(tq, "componenteId", None),
             enunciado=tq.enunciado,
             alternativaMarcada=texto_marcada,
             alternativaCorreta=texto_correta or resposta_correta_original,
             correta=correta,
         ))
     return gabarito
+
+
+def _resultado_por_componente(tentativas_questoes: list) -> dict[str, dict]:
+    """Agrupa as tentativas por componente e calcula acertos/total/nota DENTRO de
+    cada componente. Só inclui tentativas que têm componenteId (etapas
+    multi-componente novas); etapas antigas caem no cálculo global.
+    """
+    grupos: dict[str, list] = {}
+    for tq in tentativas_questoes:
+        cid = getattr(tq, "componenteId", None)
+        if cid:
+            grupos.setdefault(cid, []).append(tq)
+
+    saida: dict[str, dict] = {}
+    for cid, tqs in grupos.items():
+        total = len(tqs)
+        acertos = _contar_acertos(tqs)
+        nota = round(acertos / total * 10, 1) if total > 0 else 0.0
+        saida[cid] = {"acertos": acertos, "total": total, "nota": nota}
+    return saida
+
+
+async def _breakdown_componentes(simulado, por_componente: dict) -> list[ComponenteResultado]:
+    """Monta a quebra por componente com nome e (quando certificadora) aprovado."""
+    if not por_componente:
+        return []
+
+    componentes = await db.componentecurricular.find_many(
+        where={"id": {"in": list(por_componente.keys())}}
+    )
+    nomes = {c.id: c.nome for c in componentes}
+
+    nota_minima = None
+    if simulado.geraCertificado:
+        nota_minima = (
+            simulado.notaMinimaCertificacao
+            if simulado.notaMinimaCertificacao is not None
+            else 6.0
+        )
+
+    saida = [
+        ComponenteResultado(
+            componenteId=cid,
+            componente=nomes.get(cid, "—"),
+            acertos=r["acertos"],
+            total=r["total"],
+            nota=r["nota"],
+            aprovado=(r["nota"] >= nota_minima) if nota_minima is not None else None,
+        )
+        for cid, r in por_componente.items()
+    ]
+    saida.sort(key=lambda x: x.componente)
+    return saida
 
 
 def _contar_acertos(tentativas_questoes: list) -> int:
@@ -623,6 +678,7 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
                 "alternativas": Json(alternativas_originais),
                 "respostaCorreta": resposta_correta,
                 "ordem": q["ordem"],
+                **({"componenteId": q["componenteId"]} if q.get("componenteId") else {}),
                 **({"alternativasEmbaralhadas": alts_para_salvar} if alts_para_salvar else {}),
             }
         )
@@ -719,6 +775,7 @@ async def submeter_prova(resultado_id: str, usuario=Depends(get_current_user)):
     acertos = _contar_acertos(resultado.tentativasQuestoes)
     total = len(resultado.tentativasQuestoes)
     pontuacao = round(acertos / total * 10, 1) if total > 0 else 0.0
+    por_componente = _resultado_por_componente(resultado.tentativasQuestoes)
 
     await db.resultadoaluno.update(
         where={"id": resultado_id},
@@ -731,10 +788,16 @@ async def submeter_prova(resultado_id: str, usuario=Depends(get_current_user)):
 
     if status_final == "FINALIZADO":
         await processar_certificacao(
-            resultado.simulado, resultado_id, aluno.id, pontuacao, agora
+            resultado.simulado,
+            resultado_id,
+            aluno.id,
+            pontuacao,
+            agora,
+            notas_por_componente={cid: r["nota"] for cid, r in por_componente.items()},
         )
 
     janela_fim = _aware(resultado.simulado.janelaFim)
+    componentes = await _breakdown_componentes(resultado.simulado, por_componente)
 
     return ResultadoResponse(
         resultadoId=resultado_id,
@@ -748,6 +811,7 @@ async def submeter_prova(resultado_id: str, usuario=Depends(get_current_user)):
             componente=resultado.simulado.componente.nome,
             duracaoMinutos=resultado.simulado.duracaoMinutos,
         ),
+        componentes=componentes or None,
         gabaritoDisponivel=False,
         gabaritoDisponivelEm=janela_fim,
         gabarito=None,
@@ -778,6 +842,8 @@ async def ver_resultado(resultado_id: str, usuario=Depends(get_current_user)):
     janela_fim = _aware(resultado.simulado.janelaFim)
     acertos = _contar_acertos(resultado.tentativasQuestoes)
     total = len(resultado.tentativasQuestoes)
+    por_componente = _resultado_por_componente(resultado.tentativasQuestoes)
+    componentes = await _breakdown_componentes(resultado.simulado, por_componente)
 
     gabarito_disponivel = usuario.tipo != "ALUNO" or agora >= janela_fim
 
@@ -800,6 +866,7 @@ async def ver_resultado(resultado_id: str, usuario=Depends(get_current_user)):
             componente=resultado.simulado.componente.nome,
             duracaoMinutos=resultado.simulado.duracaoMinutos,
         ),
+        componentes=componentes or None,
         gabaritoDisponivel=gabarito_disponivel,
         gabaritoDisponivelEm=janela_fim,
         gabarito=_montar_gabarito(resultado.tentativasQuestoes) if gabarito_disponivel else None,

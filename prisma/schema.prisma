@@ -394,6 +394,7 @@ model TentativaQuestao {
   resultadoId              String         @map("id_resultado")
   resultado                ResultadoAluno @relation(fields: [resultadoId], references: [id], onDelete: Cascade)
   questaoId                String         @map("id_questao")
+  componenteId             String?        @map("id_componente")
   enunciado                String         @db.Text
   urlImagem                String?        @map("url_imagem")
   alternativas             Json

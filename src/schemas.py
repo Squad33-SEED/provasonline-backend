@@ -333,10 +333,20 @@ class SimuladoResumoResultado(BaseModel):
 class GabaritoItemDetalhado(BaseModel):
     ordem: int
     questaoId: str
+    componenteId: str | None = None
     enunciado: str
     alternativaMarcada: str | None
     alternativaCorreta: str
     correta: bool
+
+
+class ComponenteResultado(BaseModel):
+    componenteId: str
+    componente: str
+    acertos: int
+    total: int
+    nota: float
+    aprovado: bool | None = None
 
 
 class ResultadoResponse(BaseModel):
@@ -347,6 +357,7 @@ class ResultadoResponse(BaseModel):
     statusResultado: StatusResultado
     finalizadoEm: datetime
     simulado: SimuladoResumoResultado
+    componentes: list[ComponenteResultado] | None = None
     gabaritoDisponivel: bool
     gabaritoDisponivelEm: datetime
     gabarito: list[GabaritoItemDetalhado] | None = None
