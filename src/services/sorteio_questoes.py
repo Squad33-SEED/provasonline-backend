@@ -102,11 +102,22 @@ def _serializar_questao(questao_api: dict, ordem: int) -> dict:
     return {
         "ordem": ordem,
         "questaoId": questao_api.get("id"),
+        # Componente curricular de origem (etiquetado no sorteio); permite
+        # pontuar por componente e agrupar o gabarito na certificação ENEM.
+        "componenteId": questao_api.get("_componenteId"),
         "enunciado": questao_api.get("title", ""),
         "urlImagem": questao_api.get("imageUrl"),
         "alternativas": alternativas,
         "respostaCorreta": letra_correta,
     }
+
+
+def _tag_componente(questoes: list[dict], componente_id: str | None) -> list[dict]:
+    """Anexa o componenteId de origem a cada questão vinda da API (por slug)."""
+    if componente_id is not None:
+        for q in questoes:
+            q["_componenteId"] = componente_id
+    return questoes
 
 
 async def montar_questoes_selecionadas(
@@ -169,6 +180,23 @@ async def _subject_slugs(componente_ids: list[str]) -> list[str]:
             detail="Nenhum componente da etapa está vinculado a uma matéria da API de questões",
         )
     return slugs
+
+
+async def _mapa_slug_componente(componente_ids: list[str]) -> dict[str, str]:
+    """slug da API de questões -> componenteId (o primeiro componente do slug).
+
+    Usado para etiquetar cada questão sorteada com seu componente. No caso normal
+    (estilo ENEM) cada componente tem um slug distinto, então o mapa é 1:1.
+    """
+    componentes = await db.componentecurricular.find_many(
+        where={"id": {"in": componente_ids}}
+    )
+    mapa: dict[str, str] = {}
+    for componente in componentes:
+        slug = getattr(componente, "questionsSubjectSlug", None)
+        if slug and slug not in mapa:
+            mapa[slug] = componente.id
+    return mapa
 
 
 def _dedup_por_id(questoes: list[dict]) -> list[dict]:
@@ -234,11 +262,17 @@ async def sortear_questoes_para_prova_multi(
     qtd_dificil: int,
 ) -> list[dict]:
     slugs = await _subject_slugs(componente_ids)
+    slug_comp = await _mapa_slug_componente(componente_ids)
 
     pools_por_componente: list[dict[str, list[dict]]] = []
 
     for slug in slugs:
         faceis, medias, dificeis = await _pools_por_dificuldade([slug])
+
+        cid = slug_comp.get(slug)
+        _tag_componente(faceis, cid)
+        _tag_componente(medias, cid)
+        _tag_componente(dificeis, cid)
 
         random.shuffle(faceis)
         random.shuffle(medias)
@@ -321,12 +355,15 @@ async def montar_questoes_selecionadas_multi(
     questao_ids: list[str],
 ) -> list[dict]:
     slugs = await _subject_slugs(componente_ids)
+    slug_comp = await _mapa_slug_componente(componente_ids)
     encontradas: dict[str, dict] = {}
     for slug in slugs:
+        cid = slug_comp.get(slug)
         for q in await questions_api.buscar_questoes_por_ids(slug, questao_ids):
             qid = q.get("id")
-            if qid is not None:
-                encontradas.setdefault(qid, q)
+            if qid is not None and qid not in encontradas:
+                q["_componenteId"] = cid
+                encontradas[qid] = q
     # respeita a seleção do admin; ignora ids que não voltaram da API
     questoes = [encontradas[qid] for qid in questao_ids if qid in encontradas]
     random.shuffle(questoes)
@@ -401,27 +438,42 @@ async def verificar_disponibilidade_composicao(
 async def sortear_por_componente(composicao: dict[str, dict]) -> list[dict]:
     componente_ids = list(composicao.keys())
     slug_map, _ = await _slug_e_nome_por_componente(componente_ids)
-    agg = _agregar_por_slug(composicao, slug_map)
 
+    # Sorteia POR componente (não agrega por slug) para etiquetar cada questão
+    # com seu componenteId — base da pontuação/gabarito por componente. Ids já
+    # usados são excluídos para evitar repetição entre componentes do mesmo slug.
     selecionadas: list[dict] = []
-    for slug, q in agg.items():
+    ids_usados: set[str] = set()
+    for cid in componente_ids:
+        cotas = composicao[cid]
+        slug = slug_map[cid]
         faceis, medias, dificeis = await asyncio.gather(
             questions_api.listar_questoes(slug, "FACIL"),
             questions_api.listar_questoes(slug, "MEDIO"),
             questions_api.listar_questoes(slug, "DIFICIL"),
         )
-        faceis = _dedup_por_id(faceis)
-        medias = _dedup_por_id(medias)
-        dificeis = _dedup_por_id(dificeis)
-        if q["FACIL"] > len(faceis) or q["MEDIO"] > len(medias) or q["DIFICIL"] > len(dificeis):
+        faceis = [q for q in _dedup_por_id(faceis) if str(q.get("id")) not in ids_usados]
+        medias = [q for q in _dedup_por_id(medias) if str(q.get("id")) not in ids_usados]
+        dificeis = [q for q in _dedup_por_id(dificeis) if str(q.get("id")) not in ids_usados]
+
+        nf = int(cotas.get("facil", 0))
+        nm = int(cotas.get("medio", 0))
+        nd = int(cotas.get("dificil", 0))
+        if nf > len(faceis) or nm > len(medias) or nd > len(dificeis):
             raise HTTPException(
                 status_code=422,
                 detail="Banco de questões insuficiente para a composição solicitada",
             )
-        selecionadas += random.sample(faceis, q["FACIL"])
-        selecionadas += random.sample(medias, q["MEDIO"])
-        selecionadas += random.sample(dificeis, q["DIFICIL"])
 
-    selecionadas = _dedup_por_id(selecionadas)
+        escolhidas = (
+            random.sample(faceis, nf)
+            + random.sample(medias, nm)
+            + random.sample(dificeis, nd)
+        )
+        for q in escolhidas:
+            q["_componenteId"] = cid
+            ids_usados.add(str(q.get("id")))
+        selecionadas += escolhidas
+
     random.shuffle(selecionadas)
     return [_serializar_questao(q, ordem) for ordem, q in enumerate(selecionadas, start=1)]

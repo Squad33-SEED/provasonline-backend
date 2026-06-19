@@ -22,44 +22,68 @@ def gerar_assinatura(codigo: str, aluno_id: str, nivel_id: str, ano: int, tipo: 
     ).hexdigest()
 
 
-async def processar_certificacao(simulado, resultado_id: str, aluno_id: str, pontuacao: float, momento: datetime):
+async def processar_certificacao(
+    simulado,
+    resultado_id: str,
+    aluno_id: str,
+    pontuacao: float,
+    momento: datetime,
+    notas_por_componente: dict[str, float] | None = None,
+):
     if not simulado.geraCertificado or not simulado.nivelEnsinoId:
         return
 
     nota_minima = simulado.notaMinimaCertificacao if simulado.notaMinimaCertificacao is not None else 6.0
-    if pontuacao < nota_minima:
-        return
 
     nivel_id = simulado.nivelEnsinoId
-    componente_id = simulado.componenteId
     ano = momento.year
 
-    await db.aproveitamentocandidato.upsert(
-        where={
-            "alunoId_componenteId_nivelId_anoReferencia": {
-                "alunoId": aluno_id,
-                "componenteId": componente_id,
-                "nivelId": nivel_id,
-                "anoReferencia": ano,
-            }
-        },
-        data={
-            "create": {
-                "aluno": {"connect": {"id": aluno_id}},
-                "componente": {"connect": {"id": componente_id}},
-                "nivel": {"connect": {"id": nivel_id}},
-                "tentativa": {"connect": {"id": resultado_id}},
-                "anoReferencia": ano,
-                "aprovado": True,
-                "notaObtida": pontuacao,
+    # Notas por componente: etapas multi-componente novas trazem a nota de CADA
+    # componente (questões etiquetadas com componenteId). Etapas antigas, sem
+    # essa quebra, creditam o componente principal com a nota global (compat).
+    if notas_por_componente:
+        creditos = dict(notas_por_componente)
+    else:
+        creditos = {simulado.componenteId: pontuacao}
+
+    creditou = False
+    for componente_id, nota in creditos.items():
+        # Cada componente é aprovado independentemente: só credita quem atingiu
+        # a nota mínima (certificação acumulativa por componente).
+        if nota < nota_minima:
+            continue
+
+        await db.aproveitamentocandidato.upsert(
+            where={
+                "alunoId_componenteId_nivelId_anoReferencia": {
+                    "alunoId": aluno_id,
+                    "componenteId": componente_id,
+                    "nivelId": nivel_id,
+                    "anoReferencia": ano,
+                }
             },
-            "update": {
-                "aprovado": True,
-                "notaObtida": pontuacao,
-                "tentativa": {"connect": {"id": resultado_id}},
+            data={
+                "create": {
+                    "aluno": {"connect": {"id": aluno_id}},
+                    "componente": {"connect": {"id": componente_id}},
+                    "nivel": {"connect": {"id": nivel_id}},
+                    "tentativa": {"connect": {"id": resultado_id}},
+                    "anoReferencia": ano,
+                    "aprovado": True,
+                    "notaObtida": nota,
+                },
+                "update": {
+                    "aprovado": True,
+                    "notaObtida": nota,
+                    "tentativa": {"connect": {"id": resultado_id}},
+                },
             },
-        },
-    )
+        )
+        creditou = True
+
+    # Nenhum componente atingiu a nota mínima nesta tentativa: nada a fazer.
+    if not creditou:
+        return
 
     requeridos = await db.nivelcomponente.find_many(
         where={"nivelId": nivel_id, "obrigatorio": True}

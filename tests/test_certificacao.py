@@ -105,6 +105,56 @@ async def test_so_conclusao_sem_parcial(cenario):
 
 
 @pytest.mark.asyncio
+async def test_etapa_multi_componente_credita_todos_de_uma_vez(cenario):
+    # Cerne da correção: uma ÚNICA etapa multi-componente, ao trazer a nota de
+    # cada componente, credita todos os obrigatórios e emite o CONCLUSAO —
+    # antes só o componente principal era creditado e o certificado nunca saía.
+    ag = _agora()
+    comp1_id = cenario["sims"][0].componenteId
+    comp2_id = cenario["sims"][1].componenteId
+
+    await processar_certificacao(
+        cenario["sims"][0],
+        cenario["resultados"][0].id,
+        cenario["aluno"].id,
+        8.0,
+        ag,
+        notas_por_componente={comp1_id: 8.0, comp2_id: 7.0},
+    )
+
+    aprov = await db.aproveitamentocandidato.find_many(where={"alunoId": cenario["aluno"].id})
+    assert {a.componenteId for a in aprov} == {comp1_id, comp2_id}
+
+    certs = await db.certificado.find_many(where={"alunoId": cenario["aluno"].id})
+    assert len(certs) == 1
+    assert certs[0].tipo == "CONCLUSAO"
+
+
+@pytest.mark.asyncio
+async def test_multi_componente_credita_so_quem_passou(cenario):
+    # Componente abaixo da nota mínima não é creditado; sem todos os
+    # obrigatórios aprovados, nenhum certificado é emitido (sem parcial).
+    ag = _agora()
+    comp1_id = cenario["sims"][0].componenteId
+    comp2_id = cenario["sims"][1].componenteId
+
+    await processar_certificacao(
+        cenario["sims"][0],
+        cenario["resultados"][0].id,
+        cenario["aluno"].id,
+        6.5,
+        ag,
+        notas_por_componente={comp1_id: 8.0, comp2_id: 5.0},
+    )
+
+    aprov = await db.aproveitamentocandidato.find_many(where={"alunoId": cenario["aluno"].id})
+    assert {a.componenteId for a in aprov} == {comp1_id}
+
+    nenhum = await db.certificado.find_first(where={"alunoId": cenario["aluno"].id})
+    assert nenhum is None
+
+
+@pytest.mark.asyncio
 async def test_reprovado_nao_acumula(cenario):
     ag = _agora()
     await processar_certificacao(cenario["sims"][0], cenario["resultados"][0].id, cenario["aluno"].id, 5.0, ag)
