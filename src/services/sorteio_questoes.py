@@ -331,3 +331,97 @@ async def montar_questoes_selecionadas_multi(
     questoes = [encontradas[qid] for qid in questao_ids if qid in encontradas]
     random.shuffle(questoes)
     return [_serializar_questao(q, ordem) for ordem, q in enumerate(questoes, start=1)]
+
+
+# --- Composição POR componente (cotas F/M/D específicas de cada componente) ---
+
+
+async def _slug_e_nome_por_componente(
+    componente_ids: list[str],
+) -> tuple[dict[str, str], dict[str, str]]:
+    componentes = await db.componentecurricular.find_many(
+        where={"id": {"in": componente_ids}}
+    )
+    slug_map: dict[str, str] = {}
+    nome_map: dict[str, str] = {}
+    for c in componentes:
+        slug = getattr(c, "questionsSubjectSlug", None)
+        if not slug:
+            raise HTTPException(
+                status_code=422,
+                detail=f"O componente '{c.nome}' não está vinculado a uma matéria da API de questões",
+            )
+        slug_map[c.id] = slug
+        nome_map[c.id] = c.nome
+    if any(cid not in slug_map for cid in componente_ids):
+        raise HTTPException(status_code=422, detail="Componente curricular não encontrado")
+    return slug_map, nome_map
+
+
+def _agregar_por_slug(
+    composicao: dict[str, dict], slug_map: dict[str, str]
+) -> dict[str, dict[str, int]]:
+    """Soma as cotas por slug (componentes que mapeiam à mesma disciplina dividem o pool)."""
+    agg: dict[str, dict[str, int]] = {}
+    for cid, q in composicao.items():
+        slug = slug_map[cid]
+        a = agg.setdefault(slug, {"FACIL": 0, "MEDIO": 0, "DIFICIL": 0})
+        a["FACIL"] += int(q.get("facil", 0))
+        a["MEDIO"] += int(q.get("medio", 0))
+        a["DIFICIL"] += int(q.get("dificil", 0))
+    return agg
+
+
+async def verificar_disponibilidade_composicao(
+    composicao: dict[str, dict],
+) -> tuple[bool, list[str]]:
+    componente_ids = list(composicao.keys())
+    slug_map, nome_map = await _slug_e_nome_por_componente(componente_ids)
+    agg = _agregar_por_slug(composicao, slug_map)
+
+    faltas: list[str] = []
+    for slug, q in agg.items():
+        f, m, d = await asyncio.gather(
+            questions_api.contar_questoes(slug, "FACIL"),
+            questions_api.contar_questoes(slug, "MEDIO"),
+            questions_api.contar_questoes(slug, "DIFICIL"),
+        )
+        nomes = ", ".join(
+            sorted({nome_map[cid] for cid in componente_ids if slug_map[cid] == slug})
+        )
+        if q["FACIL"] > f:
+            faltas.append(f"{nomes}: faltam fáceis (pediu {q['FACIL']}, há {f})")
+        if q["MEDIO"] > m:
+            faltas.append(f"{nomes}: faltam médias (pediu {q['MEDIO']}, há {m})")
+        if q["DIFICIL"] > d:
+            faltas.append(f"{nomes}: faltam difíceis (pediu {q['DIFICIL']}, há {d})")
+    return (len(faltas) == 0, faltas)
+
+
+async def sortear_por_componente(composicao: dict[str, dict]) -> list[dict]:
+    componente_ids = list(composicao.keys())
+    slug_map, _ = await _slug_e_nome_por_componente(componente_ids)
+    agg = _agregar_por_slug(composicao, slug_map)
+
+    selecionadas: list[dict] = []
+    for slug, q in agg.items():
+        faceis, medias, dificeis = await asyncio.gather(
+            questions_api.listar_questoes(slug, "FACIL"),
+            questions_api.listar_questoes(slug, "MEDIO"),
+            questions_api.listar_questoes(slug, "DIFICIL"),
+        )
+        faceis = _dedup_por_id(faceis)
+        medias = _dedup_por_id(medias)
+        dificeis = _dedup_por_id(dificeis)
+        if q["FACIL"] > len(faceis) or q["MEDIO"] > len(medias) or q["DIFICIL"] > len(dificeis):
+            raise HTTPException(
+                status_code=422,
+                detail="Banco de questões insuficiente para a composição solicitada",
+            )
+        selecionadas += random.sample(faceis, q["FACIL"])
+        selecionadas += random.sample(medias, q["MEDIO"])
+        selecionadas += random.sample(dificeis, q["DIFICIL"])
+
+    selecionadas = _dedup_por_id(selecionadas)
+    random.shuffle(selecionadas)
+    return [_serializar_questao(q, ordem) for ordem, q in enumerate(selecionadas, start=1)]

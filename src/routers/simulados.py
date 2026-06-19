@@ -24,6 +24,7 @@ from src.routers.aluno import _contar_acertos, _agora, _aware
 from src.services import questions_api
 from src.services.sorteio_questoes import (
     contar_disponiveis,
+    verificar_disponibilidade_composicao,
     verificar_disponibilidade_multi,
 )
 
@@ -299,6 +300,7 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
     qtd_medio = data.qtdMedio
     qtd_dificil = data.qtdDificil
     questoes_selecionadas = None
+    composicao_dict = None
 
     if data.questaoIds:
         ids_unicos = list(dict.fromkeys(data.questaoIds))
@@ -325,9 +327,22 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
         qtd_medio = sum(1 for qid in ids_unicos if qid in medias)
         qtd_dificil = sum(1 for qid in ids_unicos if qid in dificeis)
         questoes_selecionadas = Json(ids_unicos)
+    elif data.composicao:
+        # Sorteio automático com cotas POR componente: cada componente tem sua
+        # quantidade de fáceis/médias/difíceis (garante cobertura de todos).
+        composicao_dict = {
+            c.componenteId: {
+                "facil": c.qtdFacil,
+                "medio": c.qtdMedio,
+                "dificil": c.qtdDificil,
+            }
+            for c in data.composicao
+        }
+        disponivel, faltas = await verificar_disponibilidade_composicao(composicao_dict)
+        if not disponivel:
+            raise HTTPException(status_code=422, detail=" · ".join(faltas))
     else:
-        # Sorteio automático: valida disponibilidade na API de questões,
-        # somando o banco de TODOS os componentes da etapa (estilo ENEM).
+        # Sorteio automático global: soma o banco de TODOS os componentes (estilo ENEM).
         disponivel, faltas = await verificar_disponibilidade_multi(
             componente_ids, qtd_facil, qtd_medio, qtd_dificil
         )
@@ -372,6 +387,11 @@ async def criar_simulado(data: SimuladoCreate, _=Depends(require_admin)):
             **(
                 {"questoesSelecionadas": questoes_selecionadas}
                 if questoes_selecionadas is not None
+                else {}
+            ),
+            **(
+                {"composicaoPorComponente": Json(composicao_dict)}
+                if composicao_dict is not None
                 else {}
             ),
             **(
