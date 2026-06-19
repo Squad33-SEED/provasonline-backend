@@ -38,6 +38,7 @@ ROTULOS_VIOLACAO = {
 from src.services.sorteio_questoes import (
     embaralhar_alternativas_questao,
     montar_questoes_selecionadas_multi,
+    sortear_por_componente,
     sortear_questoes_para_prova_multi,
 )
 
@@ -571,11 +572,14 @@ async def iniciar_prova(simulado_id: str, usuario=Depends(get_current_user)):
         componente_ids = [simulado.componenteId]
 
     selecionadas = getattr(simulado, "questoesSelecionadas", None)
+    composicao = getattr(simulado, "composicaoPorComponente", None)
 
     if isinstance(selecionadas, list) and selecionadas:
         questoes_sorteadas = await montar_questoes_selecionadas_multi(
             componente_ids, selecionadas
         )
+    elif isinstance(composicao, dict) and composicao:
+        questoes_sorteadas = await sortear_por_componente(composicao)
     else:
         questoes_sorteadas = await sortear_questoes_para_prova_multi(
             componente_ids,

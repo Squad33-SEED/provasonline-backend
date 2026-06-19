@@ -188,14 +188,22 @@ class AlunoListItem(BaseModel):
     escolaNome: str | None = None
 
 
+class ComposicaoComponente(BaseModel):
+    componenteId: str = Field(min_length=1)
+    qtdFacil: int = Field(default=0, ge=0, le=100)
+    qtdMedio: int = Field(default=0, ge=0, le=100)
+    qtdDificil: int = Field(default=0, ge=0, le=100)
+
+
 class SimuladoCreate(BaseModel):
     titulo: str = Field(min_length=3, max_length=200)
     descricao: str | None = Field(default=None, max_length=2000)
     componenteId: str | None = Field(default=None, min_length=1)
     componenteIds: list[str] = Field(default_factory=list)
-    qtdFacil: int = Field(ge=0, le=100)
-    qtdMedio: int = Field(ge=0, le=100)
-    qtdDificil: int = Field(ge=0, le=100)
+    composicao: list[ComposicaoComponente] = Field(default_factory=list)
+    qtdFacil: int = Field(default=0, ge=0, le=100)
+    qtdMedio: int = Field(default=0, ge=0, le=100)
+    qtdDificil: int = Field(default=0, ge=0, le=100)
     vagas: int = Field(ge=1, le=10000)
     duracaoMinutos: int = Field(ge=15, le=240)
     janelaInicio: datetime
@@ -209,6 +217,12 @@ class SimuladoCreate(BaseModel):
 
     @model_validator(mode="after")
     def validar_regras_compostas(self):
+        if self.composicao:
+            self.componenteIds = [c.componenteId for c in self.composicao]
+            self.qtdFacil = sum(c.qtdFacil for c in self.composicao)
+            self.qtdMedio = sum(c.qtdMedio for c in self.composicao)
+            self.qtdDificil = sum(c.qtdDificil for c in self.composicao)
+
         if not self.componenteIds:
             if self.componenteId:
                 self.componenteIds = [self.componenteId]

@@ -328,6 +328,7 @@ model Simulado {
   janelaFim            DateTime             @map("janela_fim")
   embaralharAlternativas Boolean            @default(false) @map("embaralhar_alternativas")
   questoesSelecionadas Json?                @map("questoes_selecionadas")
+  composicaoPorComponente Json?             @map("composicao_por_componente")
   geraCertificado      Boolean              @default(false) @map("gera_certificado")
   nivelEnsinoId        String?              @map("id_nivel")
   nivelEnsino          NivelEnsino?         @relation(fields: [nivelEnsinoId], references: [id])
