@@ -221,22 +221,77 @@ async def test_crud_assunto(client, admin_token):
 
 
 @pytest.mark.asyncio
-async def test_toggle_nivel_bloqueado_com_modalidades_ativas(client, admin_token):
-    """Não pode desativar nível que ainda tem modalidades ativas."""
-    nivel_id = await _get_nivel(client, admin_token)
+async def test_toggle_nivel_desativa_em_cascata(client, admin_token):
+    """Desativar um nível agora cascateia: modalidade -> componente são
+    desativados juntos (sem bloqueio 422). Reativar não reativa os filhos."""
     headers = {"Authorization": f"Bearer {admin_token}"}
 
-    await client.post(
-        "/catalogo/modalidades",
-        json={"nivelId": nivel_id, "nome": "Modal Bloqueio", "supletivo": False},
+    # nível isolado próprio (não tocar em níveis semeados)
+    nivel_id = (await client.post(
+        "/catalogo/niveis",
+        json={"nome": "Nível Cascata Teste", "ordem": 96},
         headers=headers,
-    )
+    )).json()["id"]
+    modal_id = (await client.post(
+        "/catalogo/modalidades",
+        json={"nivelId": nivel_id, "nome": "Modal Cascata", "supletivo": False},
+        headers=headers,
+    )).json()["id"]
+    comp_id = (await client.post(
+        "/catalogo/componentes",
+        json={"modalidadeId": modal_id, "nome": "Comp Cascata", "codigo": "CASC1"},
+        headers=headers,
+    )).json()["id"]
 
-    r = await client.patch(
-        f"/catalogo/niveis/{nivel_id}/toggle", headers=headers
-    )
+    # desativa o nível -> 200, sem bloqueio
+    r = await client.patch(f"/catalogo/niveis/{nivel_id}/toggle", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["ativo"] is False
 
-    if r.status_code == 200:
-        await client.patch(f"/catalogo/niveis/{nivel_id}/toggle", headers=headers)
-    else:
-        assert r.status_code == 422
+    # modalidade e componente foram desativados em cascata
+    mods = (await client.get("/catalogo/modalidades/admin", headers=headers)).json()
+    assert next(m for m in mods if m["id"] == modal_id)["ativo"] is False
+    comps = (await client.get("/catalogo/componentes/admin", headers=headers)).json()
+    assert next(c for c in comps if c["id"] == comp_id)["ativo"] is False
+
+    # reativar o nível NÃO reativa os filhos
+    r2 = await client.patch(f"/catalogo/niveis/{nivel_id}/toggle", headers=headers)
+    assert r2.status_code == 200
+    assert r2.json()["ativo"] is True
+    mods2 = (await client.get("/catalogo/modalidades/admin", headers=headers)).json()
+    assert next(m for m in mods2 if m["id"] == modal_id)["ativo"] is False
+
+
+@pytest.mark.asyncio
+async def test_toggle_componente_desativa_assuntos_em_cascata(client, admin_token):
+    """Desativar um componente desativa seus assuntos em cascata."""
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    nivel_id = (await client.post(
+        "/catalogo/niveis",
+        json={"nome": "Nível Casc Comp", "ordem": 95},
+        headers=headers,
+    )).json()["id"]
+    modal_id = (await client.post(
+        "/catalogo/modalidades",
+        json={"nivelId": nivel_id, "nome": "Modal CC", "supletivo": False},
+        headers=headers,
+    )).json()["id"]
+    comp_id = (await client.post(
+        "/catalogo/componentes",
+        json={"modalidadeId": modal_id, "nome": "Comp CC", "codigo": "CCASC"},
+        headers=headers,
+    )).json()["id"]
+    assunto_id = (await client.post(
+        f"/catalogo/componentes/{comp_id}/assuntos",
+        json={"nome": "Assunto CC"},
+        headers=headers,
+    )).json()["id"]
+
+    r = await client.patch(f"/catalogo/componentes/{comp_id}/toggle", headers=headers)
+    assert r.status_code == 200
+    assert r.json()["ativo"] is False
+
+    # o assunto saiu da lista de ativos do componente (foi desativado)
+    assuntos = (await client.get(f"/catalogo/assuntos/{comp_id}", headers=headers)).json()
+    assert all(a["id"] != assunto_id for a in assuntos)

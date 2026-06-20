@@ -24,12 +24,32 @@ from src.schemas import (
 
 router = APIRouter(prefix="/catalogo", tags=["Catálogo"])
 
-def _msg_bloqueio(partes: list[str]) -> str:
-    """Mensagem acionável: diz QUAIS dependentes impedem a desativação."""
-    return (
-        "Não é possível desativar: ainda há "
-        + " e ".join(partes)
-        + " em uso. Desative esses itens primeiro."
+async def _desativar_componentes_em_cascata(componente_ids: list[str]) -> None:
+    """Desativa os componentes informados + seus assuntos e questões.
+    Cascata do catálogo: não toca em simulados publicados (provas em andamento)."""
+    if not componente_ids:
+        return
+    await db.assunto.update_many(
+        where={"componenteId": {"in": componente_ids}}, data={"ativo": False}
+    )
+    await db.questao.update_many(
+        where={"componenteId": {"in": componente_ids}}, data={"ativa": False}
+    )
+    await db.componentecurricular.update_many(
+        where={"id": {"in": componente_ids}}, data={"ativo": False}
+    )
+
+
+async def _desativar_modalidades_em_cascata(modalidade_ids: list[str]) -> None:
+    """Desativa as modalidades + seus componentes (e descendentes). Não toca em turmas."""
+    if not modalidade_ids:
+        return
+    comps = await db.componentecurricular.find_many(
+        where={"modalidadeId": {"in": modalidade_ids}}
+    )
+    await _desativar_componentes_em_cascata([c.id for c in comps])
+    await db.modalidade.update_many(
+        where={"id": {"in": modalidade_ids}}, data={"ativo": False}
     )
 
 @router.get("/niveis", response_model=list[NivelResumo])
@@ -162,13 +182,11 @@ async def toggle_nivel(nivel_id: str, _=Depends(require_admin)):
     if not nivel:
         raise HTTPException(status_code=404, detail="Nível não encontrado")
 
+    # Ao desativar, cascateia para modalidades/componentes/assuntos/questões.
+    # Reativar não cascateia (o admin reativa os filhos seletivamente).
     if nivel.ativo:
-        n_modal = await db.modalidade.count(where={"nivelId": nivel_id, "ativo": True})
-        if n_modal > 0:
-            raise HTTPException(
-                status_code=422,
-                detail=_msg_bloqueio([f"{n_modal} modalidade(s) ativa(s) deste nível"]),
-            )
+        mods = await db.modalidade.find_many(where={"nivelId": nivel_id})
+        await _desativar_modalidades_em_cascata([m.id for m in mods])
 
     atualizado = await db.nivelensino.update(
         where={"id": nivel_id},
@@ -231,18 +249,13 @@ async def toggle_modalidade(modalidade_id: str, _=Depends(require_admin)):
     if not modalidade:
         raise HTTPException(status_code=404, detail="Modalidade não encontrada")
 
+    # Ao desativar, cascateia para os componentes (e descendentes). Turmas não
+    # são tocadas. Reativar não cascateia.
     if modalidade.ativo:
-        n_comp = await db.componentecurricular.count(
-            where={"modalidadeId": modalidade_id, "ativo": True}
+        comps = await db.componentecurricular.find_many(
+            where={"modalidadeId": modalidade_id}
         )
-        n_turmas = await db.turma.count(where={"modalidadeId": modalidade_id})
-        partes = []
-        if n_comp > 0:
-            partes.append(f"{n_comp} componente(s) ativo(s)")
-        if n_turmas > 0:
-            partes.append(f"{n_turmas} turma(s)")
-        if partes:
-            raise HTTPException(status_code=422, detail=_msg_bloqueio(partes))
+        await _desativar_componentes_em_cascata([c.id for c in comps])
 
     atualizada = await db.modalidade.update(
         where={"id": modalidade_id},
@@ -342,20 +355,15 @@ async def toggle_componente(componente_id: str, _=Depends(require_admin)):
     if not componente:
         raise HTTPException(status_code=404, detail="Componente não encontrado")
 
+    # Ao desativar, cascateia para assuntos e questões. Simulados publicados não
+    # são tocados (não derruba provas em andamento). Reativar não cascateia.
     if componente.ativo:
-        n_questoes = await db.questao.count(
-            where={"componenteId": componente_id, "ativa": True}
+        await db.assunto.update_many(
+            where={"componenteId": componente_id}, data={"ativo": False}
         )
-        n_simulados = await db.simulado.count(
-            where={"componenteId": componente_id, "status": "PUBLICADO"}
+        await db.questao.update_many(
+            where={"componenteId": componente_id}, data={"ativa": False}
         )
-        partes = []
-        if n_questoes > 0:
-            partes.append(f"{n_questoes} questão(ões)")
-        if n_simulados > 0:
-            partes.append(f"{n_simulados} simulado(s) publicado(s)")
-        if partes:
-            raise HTTPException(status_code=422, detail=_msg_bloqueio(partes))
 
     atualizado = await db.componentecurricular.update(
         where={"id": componente_id},
