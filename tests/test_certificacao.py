@@ -173,7 +173,9 @@ async def test_verificacao_publica(client, cenario):
     assert r.status_code == 200
     body = r.json()
     assert body["status"] == "VALIDO"
-    assert body["nome"] == "Candidato CERT"
+    # nome mascarado: 1ª letra de cada parte; CPF parcial (esconde 3 primeiros e 2 últimos)
+    assert body["nome"] == "C******** C***"
+    assert body["cpf"] == "***.000.000-**"
 
     r2 = await client.get("/certificados/verificar/codigo-que-nao-existe")
     assert r2.json()["status"] == "NAO_ENCONTRADO"
